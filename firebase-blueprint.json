@@ -1,0 +1,172 @@
+{
+  "entities": {
+    "BuilderProfile": {
+      "title": "BuilderProfile",
+      "description": "Per-user builder profile and aggregate gameplay progression stats.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase Auth UID matching the document ID."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Builder display name shown in the hub and profile."
+        },
+        "totalBlocksMined": {
+          "type": "integer",
+          "description": "Lifetime blocks mined across all worlds."
+        },
+        "totalBlocksPlaced": {
+          "type": "integer",
+          "description": "Lifetime blocks placed across all worlds."
+        },
+        "totalItemsCrafted": {
+          "type": "integer",
+          "description": "Lifetime items crafted across all worlds."
+        },
+        "builderLevel": {
+          "type": "integer",
+          "description": "Calculated builder progression level starting at 1."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() upon profile creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp updated via FieldValue.serverTimestamp() on every save."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "totalBlocksMined",
+        "totalBlocksPlaced",
+        "totalItemsCrafted",
+        "builderLevel",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "VoxelWorld": {
+      "title": "VoxelWorld",
+      "description": "Cloud-saved 3D voxel sandbox world storing seed, biome, mode, player position, block deltas, inventory, and hotbar.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "name": {
+          "type": "string",
+          "description": "User-chosen world title (1-50 characters)."
+        },
+        "biome": {
+          "type": "string",
+          "enum": [
+            "EMERALD_VALLEY",
+            "DESERT_DUNES",
+            "FROST_PEAKS",
+            "VOLCANIC_BADLANDS"
+          ],
+          "description": "Procedural biome type used to generate base terrain."
+        },
+        "gameMode": {
+          "type": "string",
+          "enum": [
+            "CREATIVE",
+            "SURVIVAL"
+          ],
+          "description": "Gameplay mode determining inventory limits, flying, and mining progression."
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Deterministic integer seed for procedural terrain generation."
+        },
+        "timeOfDay": {
+          "type": "number",
+          "description": "Normalized day-night cycle position from 0.0 to 1.0."
+        },
+        "pickaxeTier": {
+          "type": "integer",
+          "description": "Current pickaxe tier (1 = Wood, 2 = Iron, 3 = Diamond)."
+        },
+        "blocksMined": {
+          "type": "integer",
+          "description": "Total blocks mined in this world."
+        },
+        "blocksPlaced": {
+          "type": "integer",
+          "description": "Total blocks placed in this world."
+        },
+        "playerX": {
+          "type": "number",
+          "description": "Last saved player X world coordinate."
+        },
+        "playerY": {
+          "type": "number",
+          "description": "Last saved player Y world coordinate."
+        },
+        "playerZ": {
+          "type": "number",
+          "description": "Last saved player Z world coordinate."
+        },
+        "blockDeltas": {
+          "type": "object",
+          "description": "Native map of modified coordinates ('x,y,z') to integer block IDs (0 = air)."
+        },
+        "inventory": {
+          "type": "object",
+          "description": "Native map of BlockType names to integer stack quantities."
+        },
+        "hotbar": {
+          "type": "array",
+          "description": "Ordered list of up to 9 BlockType names equipped in the player's hotbar."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() upon world creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp updated via FieldValue.serverTimestamp() on every save."
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "biome",
+        "gameMode",
+        "seed",
+        "timeOfDay",
+        "pickaxeTier",
+        "blocksMined",
+        "blocksPlaced",
+        "blockDeltas",
+        "inventory",
+        "hotbar",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/BuilderProfile"
+      },
+      "description": "Owner-isolated builder profile and lifetime gameplay statistics."
+    },
+    "/users/{userId}/worlds/{worldId}": {
+      "schema": {
+        "$ref": "#/entities/VoxelWorld"
+      },
+      "description": "Owner-isolated collection of cloud-saved 3D voxel worlds."
+    }
+  }
+}

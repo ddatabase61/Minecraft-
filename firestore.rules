@@ -1,0 +1,246 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL PRIMITIVES ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOptionalCoord(data, field) {
+      return !(field in data) ||
+             ((data[field] is float || data[field] is int) &&
+              data[field] >= -10000 &&
+              data[field] <= 10000);
+    }
+
+    // --- VALIDATION BLUEPRINTS ---
+    function isValidBuilderProfile(data, expectedUserId) {
+      return data.keys().hasAll([
+               'userId',
+               'displayName',
+               'totalBlocksMined',
+               'totalBlocksPlaced',
+               'totalItemsCrafted',
+               'builderLevel',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId',
+               'displayName',
+               'totalBlocksMined',
+               'totalBlocksPlaced',
+               'totalItemsCrafted',
+               'builderLevel',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             data.userId is string &&
+             data.userId == expectedUserId &&
+             data.userId == request.auth.uid &&
+             data.displayName is string &&
+             data.displayName.size() >= 1 &&
+             data.displayName.size() <= 60 &&
+             data.totalBlocksMined is int &&
+             data.totalBlocksMined >= 0 &&
+             data.totalBlocksMined <= 10000000 &&
+             data.totalBlocksPlaced is int &&
+             data.totalBlocksPlaced >= 0 &&
+             data.totalBlocksPlaced <= 10000000 &&
+             data.totalItemsCrafted is int &&
+             data.totalItemsCrafted >= 0 &&
+             data.totalItemsCrafted <= 10000000 &&
+             data.builderLevel is int &&
+             data.builderLevel >= 1 &&
+             data.builderLevel <= 999 &&
+             data.createdAt is timestamp &&
+             data.createdAt <= request.time &&
+             data.updatedAt is timestamp &&
+             data.updatedAt <= request.time;
+    }
+
+    function isValidVoxelWorld(data, expectedUserId) {
+      return data.keys().hasAll([
+               'userId',
+               'name',
+               'biome',
+               'gameMode',
+               'seed',
+               'timeOfDay',
+               'pickaxeTier',
+               'blocksMined',
+               'blocksPlaced',
+               'blockDeltas',
+               'inventory',
+               'hotbar',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId',
+               'name',
+               'biome',
+               'gameMode',
+               'seed',
+               'timeOfDay',
+               'pickaxeTier',
+               'blocksMined',
+               'blocksPlaced',
+               'playerX',
+               'playerY',
+               'playerZ',
+               'blockDeltas',
+               'inventory',
+               'hotbar',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             data.userId is string &&
+             data.userId == expectedUserId &&
+             data.userId == request.auth.uid &&
+             data.name is string &&
+             data.name.size() >= 1 &&
+             data.name.size() <= 50 &&
+             data.biome is string &&
+             data.biome.size() >= 1 &&
+             data.biome.size() <= 30 &&
+             data.biome in ['EMERALD_VALLEY', 'DESERT_DUNES', 'FROST_PEAKS', 'VOLCANIC_BADLANDS'] &&
+             data.gameMode is string &&
+             data.gameMode.size() >= 1 &&
+             data.gameMode.size() <= 20 &&
+             data.gameMode in ['CREATIVE', 'SURVIVAL'] &&
+             data.seed is int &&
+             data.seed >= 0 &&
+             data.seed <= 999999999 &&
+             (data.timeOfDay is float || data.timeOfDay is int) &&
+             data.timeOfDay >= 0 &&
+             data.timeOfDay <= 1 &&
+             data.pickaxeTier is int &&
+             data.pickaxeTier >= 1 &&
+             data.pickaxeTier <= 3 &&
+             data.blocksMined is int &&
+             data.blocksMined >= 0 &&
+             data.blocksMined <= 10000000 &&
+             data.blocksPlaced is int &&
+             data.blocksPlaced >= 0 &&
+             data.blocksPlaced <= 10000000 &&
+             isOptionalCoord(data, 'playerX') &&
+             isOptionalCoord(data, 'playerY') &&
+             isOptionalCoord(data, 'playerZ') &&
+             data.blockDeltas is map &&
+             data.blockDeltas.size() <= 4000 &&
+             data.inventory is map &&
+             data.inventory.size() <= 64 &&
+             data.hotbar is list &&
+             data.hotbar.size() <= 9 &&
+             (data.hotbar.size() == 0 || (data.hotbar[0] is string && data.hotbar[0].size() <= 30)) &&
+             data.createdAt is timestamp &&
+             data.createdAt <= request.time &&
+             data.updatedAt is timestamp &&
+             data.updatedAt <= request.time;
+    }
+
+    // --- USER PROFILE COLLECTION ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidBuilderProfile(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidBuilderProfile(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt && (
+                         // Action: Update display name
+                         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']) ||
+                         // Action: Sync progression stats
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'totalBlocksMined',
+                           'totalBlocksPlaced',
+                           'totalItemsCrafted',
+                           'builderLevel',
+                           'updatedAt'
+                         ]) ||
+                         // Action: Full profile & stats refresh
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'displayName',
+                           'totalBlocksMined',
+                           'totalBlocksPlaced',
+                           'totalItemsCrafted',
+                           'builderLevel',
+                           'updatedAt'
+                         ])
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // --- USER VOXEL WORLDS SUBCOLLECTION ---
+      match /worlds/{worldId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(worldId);
+        allow list: if isOwner(userId) && isValidId(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(worldId) &&
+                         isValidVoxelWorld(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(worldId) &&
+                         isValidVoxelWorld(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().seed == existing().seed &&
+                         incoming().biome == existing().biome &&
+                         incoming().createdAt == existing().createdAt && (
+                           // Action: Rename world or switch game mode
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'gameMode', 'updatedAt']) ||
+                           // Action: Rename world only
+                           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']) ||
+                           // Action: Save gameplay state (terrain edits, player position, inventory, hotbar, time, tools, stats)
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'gameMode',
+                             'timeOfDay',
+                             'pickaxeTier',
+                             'blocksMined',
+                             'blocksPlaced',
+                             'playerX',
+                             'playerY',
+                             'playerZ',
+                             'blockDeltas',
+                             'inventory',
+                             'hotbar',
+                             'updatedAt'
+                           ])
+                         );
+
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(worldId);
+      }
+    }
+  }
+}

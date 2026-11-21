@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">BlockForge</string>
+    <string name="tagline_voxel_sandbox">Build, Mine &amp; Craft Endless Voxel Worlds</string>
+    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="continue_as_guest">Play as Guest (Offline)</string>
+    <string name="guest_mode_badge">Guest Mode • Local Save</string>
+    <string name="sign_in_subtitle">Sync your 3D voxel worlds across devices with Google, or jump straight in with a local Guest account.</string>
+    <string name="nav_worlds">Worlds</string>
+    <string name="nav_codex">Codex</string>
+    <string name="nav_profile">Profile</string>
+    <string name="action_new_world">New World</string>
+    <string name="action_play">Play</string>
+    <string name="action_save_cloud">Save</string>
+    <string name="action_craft">Craft</string>
+    <string name="action_inventory">Blocks</string>
+    <string name="action_mine_mode">Mine</string>
+    <string name="action_build_mode">Build</string>
+    <string name="action_undo">Undo</string>
+    <string name="action_rotate_camera">Rotate</string>
+    <string name="action_sign_out">Sign Out</string>
+    <string name="empty_worlds_title">No Worlds Forged Yet</string>
+    <string name="empty_worlds_subtitle">Generate your first voxel island or launch a curated starter biome below.</string>
+    <string name="cd_world_banner">Voxel world landscape banner</string>
+    <string name="cd_sign_in_art">Twilight voxel mountain artwork</string>
+    <string name="cd_back_to_hub">Return to Worlds Hub</string>
+    <string name="cd_rotate_view">Rotate camera 90 degrees</string>
+    <string name="cd_toggle_time">Switch time of day</string>
+    <string name="cd_layer_slice">Toggle elevation cutaway</string>
+    <string name="cd_open_crafting">Open crafting bench</string>
+    <string name="cd_open_inventory">Open block inventory</string>
+    <string name="cd_zoom_in">Zoom in</string>
+    <string name="cd_zoom_out">Zoom out</string>
+    <string name="cd_recenter_camera">Recenter camera</string>
+</resources>

@@ -1,0 +1,6 @@
+{
+  "name": "BlockForge",
+  "description": "A voxel sandbox building, mining, and crafting game with cloud-saved worlds, biomes, day-night cycles, and Creative & Survival modes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
