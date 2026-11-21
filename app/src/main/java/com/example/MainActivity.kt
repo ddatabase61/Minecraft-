@@ -61,6 +61,7 @@ import com.example.data.GuestLocalDataSource
 import com.example.data.WorldDataSource
 import com.example.data.firebase.WorldRepository
 import com.example.data.firebase.authStateFlow
+import com.example.data.firebase.isFirebaseConfigured
 import com.example.data.firebase.signOutUser
 import com.example.data.model.BlockType
 import com.example.engine.MiniVoxelBlockIcon
@@ -74,6 +75,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
 
 const val ROUTE_HUB = "hub"
 const val ROUTE_WORLD = "world/{worldId}"
@@ -95,21 +97,28 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun BlockForgeApp() {
-    val auth = Firebase.auth
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
-    var isGuestMode by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val firebaseAvailable = remember(context) { isFirebaseConfigured(context) }
+    val authFlow = remember(firebaseAvailable) {
+        if (firebaseAvailable) Firebase.auth.authStateFlow() else flowOf(null)
+    }
+    val initialUser = remember(firebaseAvailable) {
+        if (firebaseAvailable) Firebase.auth.currentUser else null
+    }
+    val currentUser by authFlow.collectAsStateWithLifecycle(initialValue = initialUser)
+    var isGuestMode by rememberSaveable { mutableStateOf(!firebaseAvailable) }
     var showOpeningAnimation by rememberSaveable { mutableStateOf(true) }
 
     val user = currentUser
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (user == null && !isGuestMode) {
+        if (user == null && !isGuestMode && firebaseAvailable) {
             AuthScreen(
                 onAuthSuccess = { isGuestMode = false },
                 onContinueAsGuest = { isGuestMode = true }
             )
         } else {
-            val isGuestSession = (user == null && isGuestMode)
+            val isGuestSession = (user == null || !firebaseAvailable)
             val sessionId = user?.uid ?: GuestLocalDataSource.GUEST_UID
             val displayName = user?.displayName?.takeIf { it.isNotBlank() }
                 ?: if (isGuestSession) "Guest Builder" else "Voxel Builder"
@@ -119,7 +128,11 @@ fun BlockForgeApp() {
                     currentUserId = sessionId,
                     defaultDisplayName = displayName,
                     isGuestSession = isGuestSession,
-                    onExitGuest = { isGuestMode = false }
+                    onExitGuest = {
+                        if (firebaseAvailable) {
+                            isGuestMode = false
+                        }
+                    }
                 )
             }
         }

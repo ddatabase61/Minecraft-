@@ -9,12 +9,12 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -29,6 +29,23 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 private const val AUTH_TAG = "Auth"
+
+fun isFirebaseConfigured(context: Context): Boolean {
+    return try {
+        FirebaseApp.getApps(context).isNotEmpty()
+    } catch (_: Exception) {
+        false
+    }
+}
+
+private fun resolveWebClientId(context: Context): String? {
+    return try {
+        val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        if (resId != 0) context.getString(resId).takeIf { it.isNotBlank() } else null
+    } catch (_: Exception) {
+        null
+    }
+}
 
 tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -51,13 +68,15 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
+    if (!isFirebaseConfigured(context)) {
+        onUnauthenticated()
+        return
+    }
     if (Firebase.auth.currentUser != null) {
         onAuthSuccess()
         return
     }
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
+    val clientId = resolveWebClientId(context) ?: run {
         onUnauthenticated()
         return
     }
@@ -99,10 +118,12 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    val clientId = try {
-        context.getString(R.string.default_web_client_id)
-    } catch (_: Exception) {
-        onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+    if (!isFirebaseConfigured(context)) {
+        onAuthError("Cloud Sign-In is disabled in this offline build. Please continue in Guest Mode.")
+        return
+    }
+    val clientId = resolveWebClientId(context) ?: run {
+        onAuthError("Google Sign-In configuration missing. Please continue in Guest Mode.")
         return
     }
     val activity = context.findActivity()
