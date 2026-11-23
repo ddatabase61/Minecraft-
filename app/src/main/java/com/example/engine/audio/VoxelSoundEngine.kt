@@ -3,7 +3,9 @@ package com.example.engine.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import com.example.data.model.AircraftSoundStyle
 import com.example.data.model.BikeSoundStyle
+import com.example.data.model.BlockType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +39,7 @@ class VoxelSoundEngine {
     @Volatile var isNightTime: Boolean = false
     @Volatile var isSittingOnWater: Boolean = false
     @Volatile var isRidingBike: Boolean = false
+    @Volatile var isFlyingPlane: Boolean = false
 
     fun startAmbience() {
         if (ambienceJob?.isActive == true) return
@@ -54,9 +57,9 @@ class VoxelSoundEngine {
                         playBirdChirp(highPitch = true)
                     }
                 } else {
-                    if (!isNightTime && !isRidingBike) {
+                    if (!isNightTime && !isRidingBike && !isFlyingPlane) {
                         playBirdChirp(highPitch = rng.nextBoolean())
-                    } else if (isNightTime && !isRidingBike) {
+                    } else if (isNightTime && !isRidingBike && !isFlyingPlane) {
                         playNightCricket()
                     }
                     if (isNearWater && soundEnabled) {
@@ -561,6 +564,241 @@ class VoxelSoundEngine {
     fun playHumanGreetingChime() {
         if (!soundEnabled) return
         playToneBurst(523f, 784f, 0.16f, 0.30f)
+    }
+
+    /**
+     * Surface-specific footsteps & material sounds so EVERY block in the world has its own real sound!
+     */
+    fun playSurfaceFootstep(surface: BlockType, inWater: Boolean) {
+        if (!soundEnabled) return
+        if (inWater) {
+            playFootstep(inWater = true)
+            return
+        }
+        when (surface) {
+            BlockType.GRASS, BlockType.LEAVES, BlockType.CHERRY_LEAVES, BlockType.TALL_GRASS,
+            BlockType.FLOWER_RED, BlockType.FLOWER_GOLD, BlockType.FLOWER_BLUE,
+            BlockType.FLOWER_PINK, BlockType.FLOWER_PURPLE, BlockType.FLOWER_SUNFLOWER -> playGrassRustle()
+
+            BlockType.STONE, BlockType.COBBLESTONE, BlockType.BRICK,
+            BlockType.SANDSTONE, BlockType.OBSIDIAN, BlockType.BEDROCK,
+            BlockType.COAL_ORE, BlockType.IRON_ORE, BlockType.GOLD_ORE, BlockType.DIAMOND_ORE -> playStoneRoadStep()
+
+            BlockType.WOOD_LOG, BlockType.PLANKS -> playWoodStep()
+            else -> playFootstep(inWater = false)
+        }
+    }
+
+    fun playGrassRustle() {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.09f).toInt())
+            val rng = Random(System.nanoTime())
+            var prev = 0f
+            for (i in samples.indices) {
+                val t = i.toFloat() / SAMPLE_RATE
+                val env = sin(PI * (t / 0.09f)).toFloat().coerceAtLeast(0f)
+                val white = rng.nextFloat() * 2f - 1f
+                // High-pass rustling swish like walking through grass & bushes
+                val hp = white - prev * 0.65f
+                prev = white
+                samples[i] = ((hp * env * 0.28f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    fun playStoneRoadStep() {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.055f).toInt())
+            val rng = Random(System.nanoTime())
+            for (i in samples.indices) {
+                val t = i.toFloat() / SAMPLE_RATE
+                val env = exp(-t * 68f)
+                val clack = sin(2.0 * PI * 420.0 * t).toFloat() * 0.45f +
+                    sin(2.0 * PI * 980.0 * t).toFloat() * 0.28f +
+                    (rng.nextFloat() * 2f - 1f) * 0.26f
+                samples[i] = ((clack * env * 0.42f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    fun playWoodStep() {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.07f).toInt())
+            for (i in samples.indices) {
+                val t = i.toFloat() / SAMPLE_RATE
+                val env = exp(-t * 44f)
+                val knock = sin(2.0 * PI * 240.0 * t).toFloat() * 0.58f +
+                    sin(2.0 * PI * 510.0 * t).toFloat() * 0.24f
+                samples[i] = ((knock * env * 0.44f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    fun playDigEarth() {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.16f).toInt())
+            val rng = Random(System.nanoTime())
+            var lp = 0f
+            for (i in samples.indices) {
+                val t = i.toFloat() / SAMPLE_RATE
+                val env = exp(-t * 16f)
+                lp = lp * 0.65f + (rng.nextFloat() * 2f - 1f) * 0.35f
+                val scoop = sin(2.0 * PI * (120.0 - t * 240.0).coerceAtLeast(45.0) * t).toFloat() * 0.55f
+                samples[i] = (((lp * 0.65f + scoop) * env * 0.58f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    // --- 3D Airplane Jet, Propeller, Afterburner & Sky Missile Sounds ---
+
+    fun playPlaneStart(style: AircraftSoundStyle) {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.55f).toInt())
+            val rng = Random(System.nanoTime())
+            var lp = 0f
+            var phase = 0.0
+            for (i in samples.indices) {
+                val p = i.toFloat() / samples.size
+                val env = sin(PI * p).toFloat().coerceAtLeast(0f)
+                val freq = when (style) {
+                    AircraftSoundStyle.PROPELLER_CLASSIC -> 48f + p * 82f
+                    AircraftSoundStyle.FIGHTER_AFTERBURNER -> 140f + p * 420f
+                    AircraftSoundStyle.VTOL_HYBRID -> 110f + p * 290f
+                    AircraftSoundStyle.JET_TURBINE -> 95f + p * 240f
+                }
+                phase += 2.0 * PI * freq / SAMPLE_RATE
+                lp = lp * 0.72f + (rng.nextFloat() * 2f - 1f) * 0.28f
+                val whine = sin(phase).toFloat() * 0.42f + sin(phase * 2.5).toFloat() * 0.22f
+                val jetAir = lp * (if (style == AircraftSoundStyle.PROPELLER_CLASSIC) 0.25f else 0.52f)
+                samples[i] = (((whine + jetAir) * env * 0.62f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    fun playPlaneEnginePulse(style: AircraftSoundStyle, speedRatio: Float, boost: Boolean) {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.22f).toInt())
+            val rng = Random(System.nanoTime())
+            var lp = 0f
+            var phase = 0.0
+            val sr = speedRatio.coerceIn(0f, 1.3f)
+            val baseF = when (style) {
+                AircraftSoundStyle.PROPELLER_CLASSIC -> 42f + sr * 44f
+                AircraftSoundStyle.FIGHTER_AFTERBURNER -> 150f + sr * 220f + if (boost) 130f else 0f
+                AircraftSoundStyle.VTOL_HYBRID -> 115f + sr * 150f
+                AircraftSoundStyle.JET_TURBINE -> 90f + sr * 130f
+            }
+            for (i in samples.indices) {
+                val p = i.toFloat() / samples.size
+                val env = sin(PI * p).toFloat().coerceAtLeast(0f)
+                phase += 2.0 * PI * baseF / SAMPLE_RATE
+                lp = lp * 0.76f + (rng.nextFloat() * 2f - 1f) * 0.24f
+                val tone = if (style == AircraftSoundStyle.PROPELLER_CLASSIC) {
+                    val chop = if (sin(phase) > 0) 0.52f else -0.35f
+                    chop + lp * 0.24f
+                } else {
+                    sin(phase).toFloat() * 0.30f + sin(phase * 2.0).toFloat() * 0.16f + lp * (if (boost) 0.75f else 0.46f)
+                }
+                val gain = if (boost) 0.56f else 0.34f
+                samples[i] = ((tone * env * gain).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    fun playPlaneAfterburner() {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.48f).toInt())
+            val rng = Random(System.nanoTime())
+            var lp = 0f
+            for (i in samples.indices) {
+                val t = i.toFloat() / SAMPLE_RATE
+                val env = exp(-t * 3.8f)
+                lp = lp * 0.62f + (rng.nextFloat() * 2f - 1f) * 0.38f
+                val boom = sin(2.0 * PI * (115.0 + t * 520.0) * t).toFloat() * 0.38f
+                samples[i] = (((lp * 0.75f + boom) * env * 0.78f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    // --- Indian Wedding Shehnai + Dhol Celebration Sound ---
+
+    fun playWeddingShehnai() {
+        if (!soundEnabled) return
+        scope.launch {
+            val notes = floatArrayOf(523.25f, 587.33f, 659.25f, 783.99f, 659.25f, 783.99f, 1046.5f)
+            val totalSamples = (SAMPLE_RATE * 0.84f).toInt()
+            val samples = ShortArray(totalSamples)
+            val noteLen = totalSamples / notes.size
+            var phase = 0.0
+            for (i in samples.indices) {
+                val noteIdx = (i / noteLen).coerceIn(0, notes.lastIndex)
+                val localP = (i % noteLen).toFloat() / noteLen
+                val env = sin(PI * localP).toFloat().coerceAtLeast(0f)
+                val vibrato = sin(2.0 * PI * 6.5 * i / SAMPLE_RATE).toFloat() * 8f
+                val freq = notes[noteIdx] + vibrato
+                phase += 2.0 * PI * freq / SAMPLE_RATE
+                // Nasal reed timbre (Shehnai harmonics) + soft Dhol beat on alternating notes
+                val reed = sin(phase).toFloat() * 0.45f +
+                    sin(phase * 2.0).toFloat() * 0.30f +
+                    sin(phase * 3.0).toFloat() * 0.18f
+                val dhol = if (localP < 0.25f) sin(2.0 * PI * 115.0 * localP).toFloat() * exp(-localP * 14f) * 0.35f else 0f
+                samples[i] = (((reed * env + dhol) * 0.52f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    // --- International War Horn & Sword Clash Sounds ---
+
+    fun playWarHorn() {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.72f).toInt())
+            var phase = 0.0
+            for (i in samples.indices) {
+                val p = i.toFloat() / samples.size
+                val env = sin(PI * p).toFloat().coerceAtLeast(0f)
+                val freq = 148f + sin(PI * p).toFloat() * 24f
+                phase += 2.0 * PI * freq / SAMPLE_RATE
+                val brass = sin(phase).toFloat() * 0.55f +
+                    sin(phase * 2.0).toFloat() * 0.32f +
+                    sin(phase * 3.0).toFloat() * 0.18f
+                samples[i] = ((brass * env * 0.66f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
+    }
+
+    fun playSwordClash() {
+        if (!soundEnabled) return
+        scope.launch {
+            val samples = ShortArray((SAMPLE_RATE * 0.19f).toInt())
+            val rng = Random(System.nanoTime())
+            for (i in samples.indices) {
+                val t = i.toFloat() / SAMPLE_RATE
+                val env = exp(-t * 20f)
+                val metal = sin(2.0 * PI * 1950.0 * t).toFloat() * 0.38f +
+                    sin(2.0 * PI * 2840.0 * t).toFloat() * 0.30f +
+                    sin(2.0 * PI * 3710.0 * t).toFloat() * 0.20f +
+                    (rng.nextFloat() * 2f - 1f) * exp(-t * 55f) * 0.35f
+                samples[i] = ((metal * env * 0.45f).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            playPcm(samples)
+        }
     }
 
     fun playAnimalCall(style: String) {

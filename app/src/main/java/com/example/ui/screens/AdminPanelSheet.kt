@@ -41,8 +41,10 @@ import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Park
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Publish
+import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material.icons.rounded.Terrain
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.Visibility
@@ -119,7 +121,9 @@ fun AdminPanelSheet(
     onClaimAdmin: (String, String) -> Result<Unit>,
     onLoginAdmin: (String, String) -> Result<Unit>,
     onUpdatePassword: (String, String) -> Result<Unit>,
+    onGeneratePassword: () -> String = { "" },
     onLockAdmin: () -> Unit,
+    onLaunchFullEngine: (() -> Unit)? = null,
     onImportObjUri: (Uri) -> Result<Pair<String, Int>>,
     onSaveCustomModel: (AdminCustom3DModel, Boolean) -> Unit,
     onDeleteCustomModel: (String) -> Unit,
@@ -212,6 +216,8 @@ fun AdminPanelSheet(
                 AdminAuthGateCard(
                     isClaimed = snapshot.isAdminClaimed,
                     savedEmail = snapshot.adminEmail,
+                    lockoutRemainingSec = snapshot.lockoutRemainingSec,
+                    onGeneratePassword = onGeneratePassword,
                     onClaimAdmin = onClaimAdmin,
                     onLoginAdmin = onLoginAdmin
                 )
@@ -261,6 +267,7 @@ fun AdminPanelSheet(
                         snapshot = snapshot,
                         inGameWorld = inGameWorld,
                         defaultWorldTitle = defaultWorldTitle,
+                        onLaunchFullEngine = onLaunchFullEngine,
                         onPlantTree = onPlantTree,
                         onPlantForest = onPlantForest,
                         onCreateWaterLake = onCreateWaterLake,
@@ -297,39 +304,132 @@ fun AdminPanelSheet(
 private fun AdminAuthGateCard(
     isClaimed: Boolean,
     savedEmail: String,
+    lockoutRemainingSec: Int,
+    onGeneratePassword: () -> String,
     onClaimAdmin: (String, String) -> Result<Unit>,
     onLoginAdmin: (String, String) -> Result<Unit>
 ) {
-    var email by remember(savedEmail) { mutableStateOf(savedEmail.ifBlank { "ddatabase61@gmail.com" }) }
+    var email by remember(savedEmail) { mutableStateOf(savedEmail.ifBlank { "admin@blockforge.studio" }) }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
+    var generatedPasswordBanner by remember { mutableStateOf<String?>(null) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, Color(0x66FFD54F)),
+        border = BorderStroke(1.2.dp, Color(0x88FFD54F)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                text = if (isClaimed) "Admin Login (Email & Password)" else "सेटअप करें: अपना Admin Email & Password बनाएं",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isClaimed) "Single-User Admin Login" else "एकमात्र Admin सेटअप (1 User Only)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0x3353FF9E),
+                    border = BorderStroke(1.dp, Color(0x8853FF9E))
+                ) {
+                    Text(
+                        text = "🔒 1 USER • LOGIN ONCE",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF53FF9E),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
             Text(
                 text = if (isClaimed) {
-                    "रियल-टाइम मैप एडिट, लाइव पब्लिश और 3D मॉडल/दुश्मन अपलोड करने के लिए Admin लॉगिन करें।"
+                    "एक बार लॉगिन करने के बाद आपका सुरक्षित सेशन सेव रहेगा। केवल यही एक एडमिन अकाउंट अधिकृत है।"
                 } else {
-                    "पहली बार अपना सुरक्षित Admin Password सेट करें (कम से कम 6 अक्षर)। यह केवल आपके डिवाइस पर एन्क्रिप्टेड हैश (PBKDF2) के रूप में सुरक्षित रहता है।"
+                    "पहली बार अपना सुरक्षित Single-User Admin Email व Password बनाएं (या नीचे 'Generate Secure Password' दबाएं)। एक बार सेट होने पर कोई दूसरा व्यक्ति Admin नहीं बन सकता!"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            if (!isClaimed) {
+                OutlinedButton(
+                    onClick = {
+                        val generated = onGeneratePassword()
+                        if (generated.isNotBlank()) {
+                            password = generated
+                            confirmPassword = generated
+                            showPassword = true
+                            generatedPasswordBanner = generated
+                            errorMsg = null
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.2.dp, Color(0xFFFFD54F)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("btn_admin_generate_password")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.VpnKey,
+                        contentDescription = "Generate Secure Admin Password",
+                        tint = Color(0xFFFFD54F),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "🔐 Generate Strong Password (ऑटो पासवर्ड बनाएं)",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (generatedPasswordBanner != null) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0x2253FF9E),
+                    border = BorderStroke(1.dp, Color(0x8853FF9E)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "आपका नया सुरक्षित Admin लॉगिन (कृपया नोट करके रख लें):",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF53FF9E)
+                        )
+                        Text(
+                            text = "Email: $email\nPassword: $generatedPasswordBanner",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            if (lockoutRemainingSec > 0) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "सुरक्षा लॉक सक्रिय: कृपया $lockoutRemainingSec सेकंड प्रतीक्षा करें।",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
 
             OutlinedTextField(
                 value = email,
@@ -344,7 +444,7 @@ private fun AdminAuthGateCard(
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it; errorMsg = null },
-                label = { Text(if (isClaimed) "Admin Password" else "Create Strong Password (min 6 chars)") },
+                label = { Text(if (isClaimed) "Admin Password" else "Strong Password (min 6 chars)") },
                 singleLine = true,
                 visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
@@ -407,7 +507,7 @@ private fun AdminAuthGateCard(
             ) {
                 Icon(Icons.Rounded.AdminPanelSettings, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(if (isClaimed) "Unlock Admin Panel" else "Create Admin & Unlock Now")
+                Text(if (isClaimed) "Unlock Admin Panel (Login Once)" else "Lock Single-Owner Admin & Unlock")
             }
         }
     }
@@ -419,6 +519,7 @@ private fun AdminLiveMapTab(
     snapshot: AdminStudioSnapshot,
     inGameWorld: Boolean,
     defaultWorldTitle: String,
+    onLaunchFullEngine: (() -> Unit)?,
     onPlantTree: () -> Unit,
     onPlantForest: () -> Unit,
     onCreateWaterLake: (Boolean) -> Unit,
@@ -436,6 +537,48 @@ private fun AdminLiveMapTab(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (inGameWorld && onLaunchFullEngine != null) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF10242C),
+                border = BorderStroke(1.6.dp, Color(0xFF00E5FF)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "🛠️ Full-Screen 3D Game Engine Studio",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF7CEBFF)
+                    )
+                    Text(
+                        text = "रियल-टाइम में उड़कर पूरे मैप में गड्ढा-गुड्डी, घास-फूस, झाड़ी, पेड़, फूल, जंगल, रोड, शादी मंडप, हवाई पट्टी, सेना व युद्ध सेट करें — फुल स्क्रीन Back बटन व #1 Rank Publish के साथ!",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFD6EEF8)
+                    )
+                    Button(
+                        onClick = onLaunchFullEngine,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF00E5FF),
+                            contentColor = Color(0xFF06161C)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("btn_launch_full_engine")
+                    ) {
+                        Icon(Icons.Rounded.RocketLaunch, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Open Full-Screen 3D Map Engine", fontWeight = FontWeight.ExtraBold)
+                    }
+                }
+            }
+        }
+
         if (inGameWorld) {
             Surface(
                 shape = RoundedCornerShape(14.dp),

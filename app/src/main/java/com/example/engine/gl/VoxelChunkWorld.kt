@@ -1,5 +1,6 @@
 package com.example.engine.gl
 
+import com.example.data.model.AdminEngineAsset
 import com.example.data.model.BiomeType
 import com.example.data.model.BlockType
 import java.nio.ByteBuffer
@@ -740,6 +741,235 @@ class VoxelChunkWorld(
             structureType = structureType
         ) { wx, wy, wz, block ->
             setBlock(wx, wy, wz, block, recordUndo = false)
+        }
+    }
+
+    /**
+     * Builds a festive 3D Indian Wedding Mandap (शादी मंडप) with 4 pillars, floral canopy,
+     * golden altar fire/torch, and pink/red flower carpet!
+     */
+    fun buildWeddingMandap(originX: Int, originZ: Int) {
+        val baseY = floor(findSpawnY(originX, originZ)).toInt().coerceIn(SEA_LEVEL + 1, CHUNK_HEIGHT - 12)
+        for (dx in -3..3) {
+            for (dz in -3..3) {
+                setBlock(originX + dx, baseY - 1, originZ + dz, BlockType.SANDSTONE, recordUndo = false)
+                for (y in baseY..(baseY + 5)) {
+                    setBlock(originX + dx, y, originZ + dz, BlockType.AIR, recordUndo = false)
+                }
+                if (abs(dx) == 3 || abs(dz) == 3) {
+                    val flower = if ((dx + dz) % 2 == 0) BlockType.FLOWER_RED else BlockType.FLOWER_PINK
+                    setBlock(originX + dx, baseY, originZ + dz, flower, recordUndo = false)
+                }
+            }
+        }
+        // 4 decorated pillars
+        val corners = listOf(-2 to -2, 2 to -2, -2 to 2, 2 to 2)
+        for ((cx, cz) in corners) {
+            for (h in 0..3) {
+                setBlock(originX + cx, baseY + h, originZ + cz, if (h == 3) BlockType.GOLD_ORE else BlockType.BRICK, recordUndo = false)
+            }
+        }
+        // Floral canopy roof
+        for (dx in -2..2) {
+            for (dz in -2..2) {
+                val roofBlock = if ((dx + dz) % 2 == 0) BlockType.CHERRY_LEAVES else BlockType.GOLD_ORE
+                setBlock(originX + dx, baseY + 4, originZ + dz, roofBlock, recordUndo = false)
+            }
+        }
+        // Sacred fire altar (Havan Kund) in center
+        setBlock(originX, baseY, originZ, BlockType.TORCH, recordUndo = false)
+    }
+
+    /**
+     * Builds a long flat paved Airport Runway with white edge markers & runway lights for taking off in 3D Airplanes!
+     */
+    fun buildAirportRunway(originX: Int, originZ: Int) {
+        val baseY = floor(findSpawnY(originX, originZ)).toInt().coerceIn(SEA_LEVEL + 1, CHUNK_HEIGHT - 14)
+        for (dx in -3..3) {
+            for (dz in -12..12) {
+                setBlock(originX + dx, baseY - 2, originZ + dz, BlockType.STONE, recordUndo = false)
+                val surface = when {
+                    abs(dx) == 3 && dz % 3 == 0 -> BlockType.TORCH
+                    dx == 0 && dz % 2 == 0 -> BlockType.SNOW
+                    abs(dx) == 3 -> BlockType.SANDSTONE
+                    else -> BlockType.OBSIDIAN
+                }
+                if (surface == BlockType.TORCH) {
+                    setBlock(originX + dx, baseY - 1, originZ + dz, BlockType.STONE, recordUndo = false)
+                    setBlock(originX + dx, baseY, originZ + dz, BlockType.TORCH, recordUndo = false)
+                } else {
+                    setBlock(originX + dx, baseY - 1, originZ + dz, surface, recordUndo = false)
+                    for (y in baseY..(baseY + 6)) {
+                        setBlock(originX + dx, y, originZ + dz, BlockType.AIR, recordUndo = false)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Full-Screen Real-Time Admin Game Engine Placement Engine:
+     * Executes ANY Asset Store item at the Admin's exact 3D crosshair coordinate (wx, wy, wz)!
+     */
+    fun applyAdminEngineAsset(
+        wx: Int,
+        wy: Int,
+        wz: Int,
+        asset: AdminEngineAsset,
+        brushRadius: Int = 2
+    ) {
+        val r = brushRadius.coerceIn(1, 5)
+        val groundY = wy.coerceIn(3, CHUNK_HEIGHT - 6)
+        when (asset) {
+            AdminEngineAsset.DIG_SMALL_PIT -> {
+                val depth = (r + 1).coerceAtMost(4)
+                for (dx in -r..r) {
+                    for (dz in -r..r) {
+                        if (dx * dx + dz * dz <= r * r + 1) {
+                            for (dy in 0 until depth) {
+                                val y = (groundY - dy).coerceAtLeast(2)
+                                setBlock(wx + dx, y, wz + dz, BlockType.AIR, recordUndo = (dx == 0 && dz == 0 && dy == 0))
+                            }
+                        }
+                    }
+                }
+            }
+            AdminEngineAsset.DIG_DEEP_CRATER -> {
+                val cr = (r + 2).coerceAtMost(6)
+                for (dx in -cr..cr) {
+                    for (dz in -cr..cr) {
+                        val d2 = dx * dx + dz * dz
+                        if (d2 <= cr * cr) {
+                            val depth = ((cr - kotlin.math.sqrt(d2.toFloat())).toInt() + 2).coerceIn(1, 6)
+                            for (dy in 0..depth) {
+                                val y = (groundY - dy).coerceAtLeast(2)
+                                setBlock(wx + dx, y, wz + dz, BlockType.AIR, recordUndo = false)
+                            }
+                        }
+                    }
+                }
+            }
+            AdminEngineAsset.FLATTEN_GROUND -> {
+                for (dx in -r..r) {
+                    for (dz in -r..r) {
+                        setBlock(wx + dx, groundY - 1, wz + dz, BlockType.DIRT, recordUndo = false)
+                        setBlock(wx + dx, groundY, wz + dz, BlockType.GRASS, recordUndo = false)
+                        for (dy in 1..4) {
+                            setBlock(wx + dx, groundY + dy, wz + dz, BlockType.AIR, recordUndo = false)
+                        }
+                    }
+                }
+            }
+            AdminEngineAsset.RAISE_HILL -> {
+                val hr = (r + 1).coerceAtMost(5)
+                for (dx in -hr..hr) {
+                    for (dz in -hr..hr) {
+                        val dist = kotlin.math.sqrt((dx * dx + dz * dz).toFloat())
+                        if (dist <= hr) {
+                            val peak = ((hr - dist) * 1.15f).toInt().coerceAtLeast(1)
+                            for (h in 1..peak) {
+                                val y = (groundY + h).coerceAtMost(CHUNK_HEIGHT - 3)
+                                setBlock(wx + dx, y, wz + dz, if (h == peak) BlockType.GRASS else BlockType.DIRT, recordUndo = false)
+                            }
+                        }
+                    }
+                }
+            }
+            AdminEngineAsset.STONE_ROAD -> {
+                for (dx in -r..r) {
+                    for (dz in -r..r) {
+                        val b = when {
+                            dx == 0 && (wz + dz) % 2 == 0 -> BlockType.SANDSTONE
+                            abs(dx) == r -> BlockType.COBBLESTONE
+                            else -> BlockType.STONE
+                        }
+                        setBlock(wx + dx, groundY, wz + dz, b, recordUndo = false)
+                        for (dy in 1..3) {
+                            setBlock(wx + dx, groundY + dy, wz + dz, BlockType.AIR, recordUndo = false)
+                        }
+                    }
+                }
+            }
+            AdminEngineAsset.GRASS_PATCH -> {
+                for (dx in -r..r) {
+                    for (dz in -r..r) {
+                        setBlock(wx + dx, groundY, wz + dz, BlockType.GRASS, recordUndo = false)
+                        if ((abs(dx * 7 + dz * 13) % 3) == 0) {
+                            val plant = if ((dx + dz) % 2 == 0) BlockType.FLOWER_GOLD else BlockType.TALL_GRASS
+                            setBlock(wx + dx, groundY + 1, wz + dz, plant, recordUndo = false)
+                        }
+                    }
+                }
+            }
+            AdminEngineAsset.GREEN_BUSH -> {
+                for (dx in -1..1) {
+                    for (dz in -1..1) {
+                        if (abs(dx) + abs(dz) <= 2) {
+                            setBlock(wx + dx, groundY + 1, wz + dz, BlockType.LEAVES, recordUndo = false)
+                        }
+                    }
+                }
+                setBlock(wx, groundY + 2, wz, BlockType.LEAVES, recordUndo = false)
+            }
+            AdminEngineAsset.OAK_TREE -> plantTreeAt(wx, wz, tall = true)
+            AdminEngineAsset.CHERRY_TREE -> {
+                val baseY = floor(findSpawnY(wx, wz)).toInt().coerceIn(SEA_LEVEL + 1, CHUNK_HEIGHT - 10)
+                for (h in 0..4) setBlock(wx, baseY + h, wz, BlockType.WOOD_LOG, recordUndo = false)
+                for (dx in -2..2) {
+                    for (dz in -2..2) {
+                        for (dy in 3..5) {
+                            if (abs(dx) + abs(dz) <= 3 || dy == 4) {
+                                setBlock(wx + dx, baseY + dy, wz + dz, BlockType.CHERRY_LEAVES, recordUndo = false)
+                            }
+                        }
+                    }
+                }
+            }
+            AdminEngineAsset.DENSE_JUNGLE -> plantForestAround(wx, wz, count = 10 + r * 2)
+            AdminEngineAsset.FLOWER_GARDEN -> {
+                val palette = listOf(
+                    BlockType.FLOWER_RED,
+                    BlockType.FLOWER_PINK,
+                    BlockType.FLOWER_PURPLE,
+                    BlockType.FLOWER_BLUE,
+                    BlockType.FLOWER_GOLD
+                )
+                for (dx in -r..r) {
+                    for (dz in -r..r) {
+                        setBlock(wx + dx, groundY, wz + dz, BlockType.GRASS, recordUndo = false)
+                        val pick = palette[Math.floorMod(wx + dx * 3 + wz + dz * 5, palette.size)]
+                        setBlock(wx + dx, groundY + 1, wz + dz, pick, recordUndo = false)
+                    }
+                }
+            }
+            AdminEngineAsset.SUNFLOWER_FIELD -> {
+                for (dx in -r..r) {
+                    for (dz in -r..r) {
+                        setBlock(wx + dx, groundY, wz + dz, BlockType.GRASS, recordUndo = false)
+                        setBlock(wx + dx, groundY + 1, wz + dz, BlockType.FLOWER_SUNFLOWER, recordUndo = false)
+                    }
+                }
+            }
+            AdminEngineAsset.WATER_POND -> createWaterSpringOrRiver(wx, wz, radius = r + 1, waterfall = false)
+            AdminEngineAsset.WATERFALL_SPRING -> createWaterSpringOrRiver(wx, wz, radius = r + 1, waterfall = true)
+            AdminEngineAsset.RIVER_CHANNEL -> {
+                for (dz in -(r + 3)..(r + 3)) {
+                    for (dx in -2..2) {
+                        setBlock(wx + dx, groundY - 1, wz + dz, BlockType.SAND, recordUndo = false)
+                        setBlock(wx + dx, groundY, wz + dz, BlockType.WATER, recordUndo = false)
+                        setBlock(wx + dx, groundY + 1, wz + dz, BlockType.AIR, recordUndo = false)
+                    }
+                }
+            }
+            AdminEngineAsset.VOLCANO_LAVA -> buildAdminLiveStructure(wx, wz, "VOLCANO")
+            AdminEngineAsset.HOUSE_HOME -> buildMiniStructure(wx, wz, isMandir = false)
+            AdminEngineAsset.WEDDING_MANDAP -> buildWeddingMandap(wx, wz)
+            AdminEngineAsset.SACRED_MANDIR -> buildMiniStructure(wx, wz, isMandir = true)
+            AdminEngineAsset.ROYAL_PALACE -> buildAdminLiveStructure(wx, wz, "PALACE")
+            AdminEngineAsset.LUXURY_VILLA -> buildRealEstateStructure(wx, wz, "VILLA")
+            AdminEngineAsset.CITY_BOULEVARD -> buildRealEstateStructure(wx, wz, "BOULEVARD_ROAD")
+            AdminEngineAsset.AIRPORT_RUNWAY -> buildAirportRunway(wx, wz)
+            else -> Unit
         }
     }
 

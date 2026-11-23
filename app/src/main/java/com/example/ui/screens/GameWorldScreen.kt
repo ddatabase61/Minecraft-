@@ -37,14 +37,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.AirplanemodeActive
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DirectionsWalk
+import androidx.compose.material.icons.rounded.FlightLand
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.material.icons.rounded.RocketLaunch
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.TwoWheeler
@@ -213,6 +216,7 @@ fun GameWorldScreen(
 
     BackHandler(enabled = !uiState.loading) {
         when {
+            uiState.adminEngineMode -> viewModel.exitAdminEngineMode()
             showBikeSheet -> showBikeSheet = false
             showRealEstateSheet -> showRealEstateSheet = false
             showAdminSheet -> showAdminSheet = false
@@ -350,7 +354,8 @@ fun GameWorldScreen(
                             modifier = Modifier.align(Alignment.Center)
                         )
 
-                        // 5. Top-Left Always-Accessible HUD Hide/Unhide Eye Button + Collapsible Pos/Avatar/Minimap
+                        // 5. Top-Left Always-Accessible HUD Hide/Unhide Eye Button + Collapsible Pos/Avatar/Minimap (hidden in Admin Engine Studio)
+                        if (!uiState.adminEngineMode) {
                         Row(
                             modifier = Modifier
                                 .align(Alignment.TopStart)
@@ -442,6 +447,7 @@ fun GameWorldScreen(
                                 goldCoins = uiState.goldCoins,
                                 adminUnlocked = uiState.adminSnapshot.isUnlockedInSession,
                                 ridingBike = uiState.activeBike != null,
+                                flyingPlane = uiState.activePlane != null,
                                 onOpenBikes = { showBikeSheet = true },
                                 onOpenAdmin = { showAdminSheet = true },
                                 onOpenRealEstate = { showRealEstateSheet = true },
@@ -455,10 +461,11 @@ fun GameWorldScreen(
                                 onToggleCamera = viewModel::toggleThirdPersonCamera
                             )
                         }
+                        }
 
                         // 6b. Top-Right Player-Controlled "Stopped — Say Hello" Conversation Card
-                        // Hidden cleanly whenever Fullscreen Eye (!showTopHud) OR Voice Hide (!showVoiceHud) is toggled!
-                        val activeNearby = uiState.activeNearbyEntity
+                        // Hidden cleanly whenever Fullscreen Eye (!showTopHud), Voice Hide (!showVoiceHud), or Admin Engine is active!
+                        val activeNearby = if (uiState.adminEngineMode) null else uiState.activeNearbyEntity
                         if (uiState.showTopHud && activeNearby != null && !uiState.showVoiceHud) {
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
@@ -844,38 +851,144 @@ fun GameWorldScreen(
                                 )
                             }
 
-                            // 9. Right Side (Bottom-Right): Bedrock Action Cluster
-                            BedrockActionButtonsCluster(
+                            // 9. Right Side (Bottom-Right): Bedrock Action Cluster (hidden during Full-Screen Admin Engine)
+                            if (!uiState.adminEngineMode) {
+                                BedrockActionButtonsCluster(
+                                    uiState = uiState,
+                                    controller = controller,
+                                    onBreakProgressChanged = { miningProgress = it },
+                                    onBreakTrigger = {
+                                        if (viewModel.breakTargetedBlock()) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        }
+                                    },
+                                    onPlaceTrigger = {
+                                        if (viewModel.placeBlockAtTarget()) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                    },
+                                    onJumpHeldChanged = { held ->
+                                        viewModel.setJumpHeld(held)
+                                    },
+                                    onToggleSneak = viewModel::toggleSneak,
+                                    onToggleFly = viewModel::toggleFlyMode,
+                                    onFireGun = {
+                                        viewModel.fireGun()
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    },
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(end = 18.dp, bottom = 72.dp)
+                                )
+                            }
+                        }
+
+                        // 9a. Full-Screen Real-Time 3D Admin Game Engine Studio Overlay (with Back button + Asset Store + Publish #1)
+                        if (uiState.adminEngineMode) {
+                            AdminGameEngineOverlay(
                                 uiState = uiState,
                                 controller = controller,
-                                onBreakProgressChanged = { miningProgress = it },
-                                onBreakTrigger = {
-                                    if (viewModel.breakTargetedBlock()) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    }
+                                onExitEngine = viewModel::exitAdminEngineMode,
+                                onSelectAsset = viewModel::selectEngineAsset,
+                                onSelectBrushRadius = viewModel::setEngineBrushRadius,
+                                onPlaceAssetHere = {
+                                    viewModel.placeSelectedEngineAssetAtCrosshair()
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 },
-                                onPlaceTrigger = {
-                                    if (viewModel.placeBlockAtTarget()) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    }
-                                },
-                                onJumpHeldChanged = { held ->
-                                    viewModel.setJumpHeld(held)
-                                },
-                                onToggleSneak = viewModel::toggleSneak,
+                                onUndo = viewModel::undoLastEdit,
                                 onToggleFly = viewModel::toggleFlyMode,
-                                onFireGun = {
-                                    viewModel.fireGun()
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onPublishLiveMap = { title, banner, desc ->
+                                    viewModel.adminPublishLiveMap(title, banner, desc)
                                 },
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(end = 18.dp, bottom = 72.dp)
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
 
-                        // 9b. Contextual Water-Sit Floating Pill OR Active 3D Bike Riding Dashboard (above Hotbar)
-                        if (uiState.showTopHud && uiState.activeBike != null) {
+                        // 9b. Contextual 3D Airplane Cockpit HUD, Bike Riding Dashboard, OR Water-Sit Floating Pill
+                        if (!uiState.adminEngineMode && uiState.showTopHud && uiState.activePlane != null) {
+                            val activePlane = uiState.activePlane!!
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color(0xE00A1620),
+                                border = BorderStroke(
+                                    width = 1.5.dp,
+                                    color = if (uiState.planeBoostActive) Color(0xFFFF6D00) else activePlane.accentColor
+                                ),
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 84.dp)
+                                    .testTag("airplane_cockpit_hud")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "${uiState.planeSpeedKmh} km/h • ALT ${uiState.planeAltitude}m",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (uiState.planeBoostActive) Color(0xFFFFAB40) else Color(0xFF00E5FF)
+                                        )
+                                        Text(
+                                            text = activePlane.displayName,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFB5CDD9),
+                                            maxLines = 1
+                                        )
+                                    }
+
+                                    BedrockTactileHoldButton(
+                                        icon = Icons.Rounded.ArrowUpward,
+                                        contentDescription = "Climb Airplane Up",
+                                        size = 38.dp,
+                                        onHoldChanged = viewModel::setPlaneClimbHeld,
+                                        tag = "plane_climb_button"
+                                    )
+                                    BedrockTactileHoldButton(
+                                        icon = Icons.Rounded.ArrowDownward,
+                                        contentDescription = "Descend Airplane Down",
+                                        size = 38.dp,
+                                        onHoldChanged = viewModel::setPlaneDescendHeld,
+                                        tag = "plane_descend_button"
+                                    )
+                                    BikeHudActionChip(
+                                        icon = Icons.Rounded.Bolt,
+                                        label = if (uiState.planeBoostActive) "AFTERBURN!" else "टर्बो",
+                                        tint = Color(0xFFFF9100),
+                                        active = uiState.planeBoostActive,
+                                        tag = "plane_boost_button",
+                                        onClick = { viewModel.triggerPlaneBoost() }
+                                    )
+                                    if (activePlane.hasWeapons) {
+                                        BikeHudActionChip(
+                                            icon = Icons.Rounded.RocketLaunch,
+                                            label = "फायर",
+                                            tint = Color(0xFFFF5252),
+                                            tag = "plane_fire_button",
+                                            onClick = { viewModel.firePlaneSkyBlaster() }
+                                        )
+                                    }
+                                    BikeHudActionChip(
+                                        icon = Icons.Rounded.AirplanemodeActive,
+                                        label = "बदलें",
+                                        tint = Color(0xFF00E5FF),
+                                        tag = "plane_switch_button",
+                                        onClick = { showBikeSheet = true }
+                                    )
+                                    BikeHudActionChip(
+                                        icon = Icons.Rounded.FlightLand,
+                                        label = "लैंड",
+                                        tint = Color(0xFFFF8A80),
+                                        tag = "plane_land_button",
+                                        onClick = { viewModel.dismountPlane() }
+                                    )
+                                }
+                            }
+                        } else if (!uiState.adminEngineMode && uiState.showTopHud && uiState.activeBike != null) {
                             val activeBike = uiState.activeBike!!
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
@@ -942,7 +1055,7 @@ fun GameWorldScreen(
                                     )
                                 }
                             }
-                        } else if (uiState.showTopHud && (uiState.waterAvailableForSit || uiState.sittingOnWater)) {
+                        } else if (!uiState.adminEngineMode && uiState.showTopHud && (uiState.waterAvailableForSit || uiState.sittingOnWater)) {
                             Surface(
                                 shape = RoundedCornerShape(18.dp),
                                 color = if (uiState.sittingOnWater) Color(0xDD0B3954) else Color(0xCC0D2330),
@@ -978,17 +1091,19 @@ fun GameWorldScreen(
                             }
                         }
 
-                        // 10. Bottom Center: Pixel Hearts & Hunger + XP Bar + 9-Slot Pixel Hotbar + `...` Inventory
-                        BedrockHotbarAndVitals(
-                            uiState = uiState,
-                            onSelectSlot = viewModel::selectHotbarSlot,
-                            onOpenInventory = { showInventorySheet = true },
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .widthIn(max = 490.dp)
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                        )
+                        // 10. Bottom Center: Pixel Hearts & Hunger + XP Bar + 9-Slot Pixel Hotbar + `...` Inventory (hidden in Admin Engine)
+                        if (!uiState.adminEngineMode) {
+                            BedrockHotbarAndVitals(
+                                uiState = uiState,
+                                onSelectSlot = viewModel::selectHotbarSlot,
+                                onOpenInventory = { showInventorySheet = true },
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .widthIn(max = 490.dp)
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            )
+                        }
                     }
 
                     // Mandatory Landscape Gate Overlay: blocks gameplay until phone is rotated to Landscape!
@@ -1012,7 +1127,12 @@ fun GameWorldScreen(
             onClaimAdmin = viewModel::adminClaimCredentials,
             onLoginAdmin = viewModel::adminLogin,
             onUpdatePassword = viewModel::adminUpdatePassword,
+            onGeneratePassword = viewModel::generateStrongAdminPassword,
             onLockAdmin = viewModel::adminLockSession,
+            onLaunchFullEngine = {
+                showAdminSheet = false
+                viewModel.enterAdminEngineMode()
+            },
             onImportObjUri = viewModel::adminImportObjUri,
             onSaveCustomModel = viewModel::adminSaveCustomModel,
             onDeleteCustomModel = viewModel::adminDeleteCustomModel,
@@ -1039,7 +1159,7 @@ fun GameWorldScreen(
             onSetTimeDay = { viewModel.setTimeOfDayManual(0.25f) },
             onSetTimeNight = { viewModel.setTimeOfDayManual(0.78f) },
             onToggleRain = viewModel::toggleRain,
-            onPublishLiveMap = viewModel::adminPublishLiveMap,
+            onPublishLiveMap = { title, banner -> viewModel.adminPublishLiveMap(title, banner) },
             onDismiss = { showAdminSheet = false }
         )
     }
@@ -1136,8 +1256,11 @@ fun GameWorldScreen(
     if (showBikeSheet) {
         BikeGarageSheet(
             activeBike = uiState.activeBike,
+            activePlane = uiState.activePlane,
             onSelectBike = { bike -> viewModel.mountBike(bike) },
             onDismountBike = { viewModel.dismountBike() },
+            onSelectPlane = { plane -> viewModel.mountPlane(plane) },
+            onDismountPlane = { viewModel.dismountPlane() },
             onDismiss = { showBikeSheet = false }
         )
     }

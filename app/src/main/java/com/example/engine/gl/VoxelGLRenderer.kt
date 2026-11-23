@@ -4,6 +4,7 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import android.opengl.Matrix
+import com.example.data.model.AircraftType
 import com.example.data.model.BikeType
 import com.example.data.model.BlockType
 import com.example.engine.audio.VoxelSoundEngine
@@ -24,6 +25,9 @@ data class HudTelemetry(
     val z: Int = 8,
     val yaw: Float = 0f,
     val targetBlock: BlockType? = null,
+    val targetBlockX: Int? = null,
+    val targetBlockY: Int? = null,
+    val targetBlockZ: Int? = null,
     val flying: Boolean = false,
     val inWater: Boolean = false,
     val isUnderwater: Boolean = false,
@@ -33,6 +37,12 @@ data class HudTelemetry(
     val activeBike: BikeType? = null,
     val bikeSpeedKmh: Int = 0,
     val bikeNitroActive: Boolean = false,
+    val activePlane: AircraftType? = null,
+    val planeSpeedKmh: Int = 0,
+    val planeAltitude: Int = 0,
+    val planeBoostActive: Boolean = false,
+    val warActive: Boolean = false,
+    val weddingsCount: Int = 0,
     val oxygen: Int = 10,
     val sprinting: Boolean = false,
     val sneaking: Boolean = false,
@@ -287,7 +297,8 @@ class VoxelGLRenderer(
                 soundEngine.playLavaSizzle()
                 entityManager.spawnLavaEmberParticles(player.x, player.y, player.z)
             } else if (stepEvents.footstep) {
-                soundEngine.playFootstep(stepEvents.inWater)
+                val underFoot = world.getBlock(floor(player.x).toInt(), floor(player.y - 0.12f).toInt(), floor(player.z).toInt())
+                soundEngine.playSurfaceFootstep(underFoot, stepEvents.inWater)
                 if (stepEvents.inWater) {
                     entityManager.spawnWaterSplashParticles(player.x, player.y + 0.1f, player.z)
                 }
@@ -295,6 +306,22 @@ class VoxelGLRenderer(
             if (stepEvents.waterSitRipple) {
                 soundEngine.playWaterSitRipple()
                 entityManager.spawnWaterSitRipples(player.x, player.y + 0.14f, player.z)
+            }
+            val activePlaneNow = stepEvents.flyingPlane
+            if (activePlaneNow != null) {
+                if (stepEvents.planeEnginePulse) {
+                    soundEngine.playPlaneEnginePulse(
+                        style = activePlaneNow.soundStyle,
+                        speedRatio = stepEvents.planeSpeedRatio,
+                        boost = stepEvents.planeBoostActive
+                    )
+                    entityManager.spawnPlaneContrailParticles(
+                        x = player.x - sin(player.yaw) * 2.1f,
+                        y = player.y + 0.85f,
+                        z = player.z + cos(player.yaw) * 2.1f,
+                        boost = stepEvents.planeBoostActive
+                    )
+                }
             }
             val activeBikeNow = stepEvents.ridingBike
             if (activeBikeNow != null) {
@@ -338,6 +365,12 @@ class VoxelGLRenderer(
             if (events.humanWorkSoundTriggered) {
                 soundEngine.playHumanWorkHammer()
             }
+            if (events.weddingTriggered) {
+                soundEngine.playWeddingShehnai()
+            }
+            if (events.warClashTriggered) {
+                soundEngine.playSwordClash()
+            }
             if (events.aiActivityToast != null) {
                 pendingWorldToast = events.aiActivityToast
             }
@@ -374,20 +407,26 @@ class VoxelGLRenderer(
             val rightX = cos(player.yaw)
             val rightZ = sin(player.yaw)
             val isFront = mode == CameraMode.THIRD_PERSON_FRONT
+            val inPlane = player.activePlane != null
             val onBike = player.activeBike != null
             val desiredDist = when {
+                inPlane -> if (isFront) 7.5f else 8.8f
                 isFront -> 3.9f
                 onBike -> 5.45f
                 player.sittingOnWater -> 4.6f
                 else -> 4.35f
             }
-            val pivotX = baseEyeX + if (isFront || onBike) 0f else rightX * 0.42f
-            val pivotY = baseEyeY + if (onBike) 0.42f else 0.14f
-            val pivotZ = baseEyeZ + if (isFront || onBike) 0f else rightZ * 0.42f
+            val pivotX = baseEyeX + if (isFront || onBike || inPlane) 0f else rightX * 0.42f
+            val pivotY = baseEyeY + when {
+                inPlane -> 1.15f
+                onBike -> 0.42f
+                else -> 0.14f
+            }
+            val pivotZ = baseEyeZ + if (isFront || onBike || inPlane) 0f else rightZ * 0.42f
 
             // Direction vector from pivot toward the orbiting camera
             val dirX = if (isFront) fx else -fx
-            val dirY = if (isFront) -fy * 0.55f + 0.12f else -fy * 0.85f + (if (onBike) 0.22f else 0.16f)
+            val dirY = if (isFront) -fy * 0.55f + 0.12f else -fy * 0.85f + (if (inPlane) 0.26f else if (onBike) 0.22f else 0.16f)
             val dirZ = if (isFront) fz else -fz
             val dirLen = kotlin.math.sqrt((dirX * dirX + dirY * dirY + dirZ * dirZ).toDouble()).toFloat().coerceAtLeast(0.001f)
             val ndx = dirX / dirLen
@@ -424,8 +463,8 @@ class VoxelGLRenderer(
                 lookY = baseEyeY - 0.15f
                 lookZ = baseEyeZ
             } else {
-                // Over-shoulder / Bike Chase camera converges smoothly onto the player's true forward aim point
-                val aimDist = 18.0f
+                // Over-shoulder / Bike / Airplane Chase camera converges smoothly onto the player's true forward aim point
+                val aimDist = if (inPlane) 26.0f else 18.0f
                 lookX = baseEyeX + fx * aimDist
                 lookY = baseEyeY + fy * aimDist
                 lookZ = baseEyeZ + fz * aimDist
@@ -433,6 +472,8 @@ class VoxelGLRenderer(
         }
 
         val targetFov = when {
+            player.planeBoostTimer > 0f -> 94f
+            player.activePlane != null -> 85f
             player.bikeNitroTimer > 0f -> 88f
             player.activeBike != null && player.bikeSpeedKmh > 60 -> 82f
             player.isEffectivelySprinting && player.moveSpeedFraction > 0.25f -> 80f
@@ -552,6 +593,7 @@ class VoxelGLRenderer(
             soundEngine.isUnderwater = player.isUnderwater
             soundEngine.isSittingOnWater = player.sittingOnWater
             soundEngine.isRidingBike = player.activeBike != null
+            soundEngine.isFlyingPlane = player.activePlane != null
 
             if (nowMs - lastMinimapMs >= 1100L || cachedMinimapColors.isEmpty()) {
                 lastMinimapMs = nowMs
@@ -573,6 +615,9 @@ class VoxelGLRenderer(
                     z = pz,
                     yaw = player.yaw,
                     targetBlock = hit?.block,
+                    targetBlockX = hit?.x,
+                    targetBlockY = hit?.y,
+                    targetBlockZ = hit?.z,
                     flying = player.flying,
                     inWater = player.inWater,
                     isUnderwater = player.isUnderwater,
@@ -582,7 +627,13 @@ class VoxelGLRenderer(
                     activeBike = player.activeBike,
                     bikeSpeedKmh = player.bikeSpeedKmh,
                     bikeNitroActive = player.bikeNitroTimer > 0f,
-                    oxygen = player.oxygen.toInt().coerceIn(0, 10),
+                    activePlane = player.activePlane,
+                    planeSpeedKmh = player.planeSpeedKmh,
+                    planeAltitude = player.planeAltitude,
+                    planeBoostActive = player.planeBoostTimer > 0f,
+                    warActive = entityManager.warModeEnabled,
+                    weddingsCount = entityManager.weddingsCount,
+                    oxygen = player.oxygen.toInt().coerceAtLeast(0).coerceAtMost(10),
                     sprinting = player.isEffectivelySprinting,
                     sneaking = player.sneaking,
                     timeOfDay = timeOfDay,

@@ -1,5 +1,6 @@
 package com.example.engine.gl
 
+import com.example.data.model.AircraftType
 import com.example.data.model.BikeType
 import com.example.data.model.BlockType
 import kotlin.math.abs
@@ -30,7 +31,11 @@ data class PlayerStepEvents(
     val ridingBike: BikeType? = null,
     val bikeEnginePulse: Boolean = false,
     val bikeSpeedRatio: Float = 0f,
-    val bikeNitroActive: Boolean = false
+    val bikeNitroActive: Boolean = false,
+    val flyingPlane: AircraftType? = null,
+    val planeEnginePulse: Boolean = false,
+    val planeSpeedRatio: Float = 0f,
+    val planeBoostActive: Boolean = false
 )
 
 /**
@@ -100,6 +105,26 @@ class VoxelPlayerController(
     @Volatile var bikeNitroTimer: Float = 0f
         private set
 
+    // --- 3D Flyable Airplane Fleet State ---
+    @Volatile var activePlane: AircraftType? = null
+        private set
+    @Volatile var planeSpeedBlocks: Float = 0f
+        private set
+    @Volatile var planeSpeedKmh: Int = 0
+        private set
+    @Volatile var planeAltitude: Int = 0
+        private set
+    @Volatile var planePitchRad: Float = 0f
+        private set
+    @Volatile var planeRollRad: Float = 0f
+        private set
+    @Volatile var planePropSpin: Float = 0f
+        private set
+    @Volatile var planeBoostTimer: Float = 0f
+        private set
+    @Volatile var planeClimbHeld: Boolean = false
+    @Volatile var planeDescendHeld: Boolean = false
+
     private var vx: Float = 0f
     private var vy: Float = 0f
     private var vz: Float = 0f
@@ -107,6 +132,7 @@ class VoxelPlayerController(
     private var stepDistanceAccum: Float = 0f
     private var waterRippleTimer: Float = 0f
     private var bikeAudioTimer: Float = 0f
+    private var planeAudioTimer: Float = 0f
     private var wasInWater: Boolean = false
     private var wasInLava: Boolean = false
 
@@ -116,18 +142,56 @@ class VoxelPlayerController(
     val eyeY: Float
         get() {
             val baseHeight = when {
+                activePlane != null -> PLANE_EYE_HEIGHT
                 activeBike != null -> BIKE_EYE_HEIGHT
                 sittingOnWater -> WATER_SIT_EYE_HEIGHT + sin(waterSitBobPhase * 2.2f) * 0.045f
                 sneaking -> CROUCH_EYE_HEIGHT
                 else -> EYE_HEIGHT
             }
-            val bob = if (activeBike == null && !sittingOnWater && !flying && (onGround || inWater) && moveSpeedFraction > 0.1f) {
+            val bob = if (activePlane == null && activeBike == null && !sittingOnWater && !flying && (onGround || inWater) && moveSpeedFraction > 0.1f) {
                 sin(walkBobPhase * 2f) * (if (isEffectivelySprinting) 0.055f else 0.036f) * moveSpeedFraction
             } else 0f
             return y + baseHeight + bob
         }
 
+    fun mountPlane(plane: AircraftType) {
+        dismountBike()
+        sittingOnWater = false
+        flying = true
+        sneaking = false
+        activePlane = plane
+        planeSpeedBlocks = plane.cruiseSpeedBlocksPerSec * 0.45f
+        planeBoostTimer = 0f
+        planePitchRad = 0.08f
+        planeRollRad = 0f
+        y = (y + 2.4f).coerceAtMost(CHUNK_HEIGHT - 8f)
+    }
+
+    fun dismountPlane(world: VoxelChunkWorld? = null) {
+        activePlane = null
+        planeSpeedBlocks = 0f
+        planeSpeedKmh = 0
+        planePitchRad = 0f
+        planeRollRad = 0f
+        planeBoostTimer = 0f
+        planeClimbHeld = false
+        planeDescendHeld = false
+        flying = false
+        if (world != null) {
+            y = world.findSpawnY(floor(x).toInt(), floor(z).toInt())
+            vy = 0f
+            onGround = true
+        }
+    }
+
+    fun triggerPlaneBoost(): Boolean {
+        if (activePlane == null) return false
+        planeBoostTimer = 3.2f
+        return true
+    }
+
     fun mountBike(bike: BikeType) {
+        if (activePlane != null) dismountPlane()
         sittingOnWater = false
         flying = false
         sneaking = false
@@ -293,8 +357,84 @@ class VoxelPlayerController(
         val normFwd = if (mag > 0.001f) (rawFwd / mag) * effectiveMag else 0f
 
         val bike = activeBike
+        val plane = activePlane
         var bikeEnginePulse = false
+        var planeEnginePulse = false
         var waterSitRipple = false
+
+        // --- MODE 0: 3D FLYABLE AIRPLANE FLIGHT PHYSICS ---
+        if (plane != null) {
+            flying = true
+            sneaking = false
+            sittingOnWater = false
+            if (planeBoostTimer > 0f) {
+                planeBoostTimer = (planeBoostTimer - dt).coerceAtLeast(0f)
+            }
+            val boostActive = planeBoostTimer > 0f
+
+            // Banking turns from joystick horizontal input
+            if (abs(rawRight) > 0.05f) {
+                yaw = (yaw + rawRight * plane.turnRate * dt) % (2f * Math.PI.toFloat())
+            }
+            val targetRoll = (-rawRight * 0.52f).coerceIn(-0.55f, 0.55f)
+            planeRollRad += (targetRoll - planeRollRad) * (dt * 6.5f).coerceIn(0f, 1f)
+
+            // Forward airspeed throttle: stays cruising smoothly in the sky!
+            val minCruise = plane.cruiseSpeedBlocksPerSec * 0.38f
+            val maxSpd = plane.cruiseSpeedBlocksPerSec * (if (boostActive) 1.48f else 1.0f)
+            val desiredSpd = when {
+                boostActive -> maxSpd
+                rawFwd > 0.08f -> minCruise + rawFwd * (maxSpd - minCruise)
+                rawFwd < -0.15f -> (minCruise * 0.45f)
+                else -> plane.cruiseSpeedBlocksPerSec * 0.62f
+            }
+            planeSpeedBlocks += (desiredSpd - planeSpeedBlocks) * (dt * 4.2f).coerceIn(0f, 1f)
+
+            // Altitude climb / descend controls (Up/Down buttons, Jump/Fly keys, or camera pitch)
+            var climbVel = 0f
+            if (planeClimbHeld || flyUpHeld || jumpHeld) climbVel += plane.climbRate
+            if (planeDescendHeld || flyDownHeld) climbVel -= plane.climbRate
+            val targetPitch = (climbVel / plane.climbRate * 0.28f).coerceIn(-0.32f, 0.34f)
+            planePitchRad += (targetPitch - planePitchRad) * (dt * 6f).coerceIn(0f, 1f)
+
+            val pFwdX = sin(yaw)
+            val pFwdZ = -cos(yaw)
+            val nextX = x + pFwdX * planeSpeedBlocks * dt
+            val nextZ = z + pFwdZ * planeSpeedBlocks * dt
+            val groundBelow = world.findSpawnY(floor(nextX).toInt(), floor(nextZ).toInt())
+            val minSafeY = (groundBelow + 1.2f).coerceAtLeast(SEA_LEVEL + 1.5f)
+            val maxSkyY = (CHUNK_HEIGHT + 28).toFloat()
+            val nextY = (y + climbVel * dt).coerceIn(minSafeY, maxSkyY)
+
+            x = nextX
+            z = nextZ
+            y = nextY
+            vy = climbVel
+            onGround = (y <= minSafeY + 0.15f)
+            planePropSpin += dt * (if (boostActive) 44f else 28f)
+            val speedRatio = (planeSpeedBlocks / plane.cruiseSpeedBlocksPerSec).coerceIn(0.2f, 1.5f)
+            planeSpeedKmh = (speedRatio * plane.maxDisplayKmh).toInt().coerceAtLeast(90)
+            planeAltitude = (y - SEA_LEVEL).toInt().coerceAtLeast(0)
+            moveSpeedFraction = 1f
+
+            planeAudioTimer += dt
+            val pulseInt = if (boostActive) 0.17f else 0.28f
+            if (planeAudioTimer >= pulseInt) {
+                planeAudioTimer = 0f
+                planeEnginePulse = true
+            }
+
+            return PlayerStepEvents(
+                footstep = false,
+                inWater = false,
+                isUnderwater = false,
+                inLava = false,
+                flyingPlane = plane,
+                planeEnginePulse = planeEnginePulse,
+                planeSpeedRatio = speedRatio,
+                planeBoostActive = boostActive
+            )
+        }
 
         // --- MODE A: SITTING / FLOATING ON WATER ---
         if (sittingOnWater) {
@@ -725,6 +865,7 @@ class VoxelPlayerController(
         const val CROUCH_EYE_HEIGHT = 1.24f
         const val WATER_SIT_EYE_HEIGHT = 1.04f
         const val BIKE_EYE_HEIGHT = 1.78f
+        const val PLANE_EYE_HEIGHT = 2.10f
         const val WALK_SPEED = 5.4f
         const val SPRINT_SPEED = 7.9f
         const val SNEAK_SPEED = 2.6f

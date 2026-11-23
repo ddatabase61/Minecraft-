@@ -50,6 +50,10 @@ data class LiveAdminMapConfig(
     val biome: BiomeType = BiomeType.EMERALD_VALLEY,
     val announcementBanner: String = "",
     val published: Boolean = false,
+    val publishedWorldId: String = "",
+    val creatorLabel: String = "",
+    val mapDescription: String = "",
+    val placedAssetsCount: Int = 0,
     val lastPublishedAtMs: Long = 0L,
     val liveEditsCount: Int = 0
 )
@@ -58,25 +62,30 @@ data class AdminStudioSnapshot(
     val isAdminClaimed: Boolean = false,
     val adminEmail: String = "",
     val isUnlockedInSession: Boolean = false,
+    val singleUserLocked: Boolean = false,
+    val lockoutRemainingSec: Int = 0,
     val customModels: List<AdminCustom3DModel> = emptyList(),
     val liveMap: LiveAdminMapConfig = LiveAdminMapConfig(),
     val equippedPublicModelId: String? = null
 )
 
 /**
- * Persistent Admin Studio & Real-Time Live Content Store.
+ * Single-Owner Persistent Admin Studio & Real-Time Game Engine Store.
  *
  * Security Safeguards:
- * - Zero hardcoded passwords in source code: Admin claims their own Email & Password on first use.
+ * - Zero hardcoded passwords in source code: First owner claims or generates strong credentials on-device.
+ * - Permanent single-admin ownership lock: Once claimed, no second account can be created.
  * - Password stored ONLY as PBKDF2WithHmacSHA256 (65,536 iterations) + random 16-byte salt in MODE_PRIVATE prefs.
- * - Constant-time verification (`MessageDigest.isEqual`).
- * - Uploaded 3D `.obj` files saved strictly inside app-private `filesDir/custom_models/<uuid>.obj` (no path traversal).
+ * - "Login Once" persistence backed by a random 256-bit session token verified against its SHA-256 digest.
+ * - Constant-time verification (`MessageDigest.isEqual`) + brute-force lockout after 5 failed attempts.
+ * - Uploaded 3D `.obj` files saved strictly inside app-private `filesDir/custom_models/<uuid>.obj` (canonical path confinement).
  */
 class AdminStudioStore private constructor(private val appContext: Context) {
 
     private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val modelsDir: File = File(appContext.filesDir, "custom_models").apply { mkdirs() }
     private val parsedMeshCache = ConcurrentHashMap<String, Parsed3DModelMesh>()
+    private val secureRandom = SecureRandom()
 
     private val _snapshot = MutableStateFlow(loadInitialSnapshot())
     val snapshot: StateFlow<AdminStudioSnapshot> = _snapshot.asStateFlow()
@@ -86,13 +95,16 @@ class AdminStudioStore private constructor(private val appContext: Context) {
         val hash = prefs.getString(KEY_ADMIN_HASH, "").orEmpty()
         val salt = prefs.getString(KEY_ADMIN_SALT, "").orEmpty()
         val claimed = email.isNotBlank() && hash.isNotBlank() && salt.isNotBlank()
+        val unlocked = claimed && verifyPersistedSessionToken()
         val models = loadCustomModels()
         val liveMap = loadLiveMap()
         val equipped = prefs.getString(KEY_EQUIPPED_MODEL_ID, null)
         return AdminStudioSnapshot(
             isAdminClaimed = claimed,
             adminEmail = email,
-            isUnlockedInSession = false,
+            isUnlockedInSession = unlocked,
+            singleUserLocked = claimed,
+            lockoutRemainingSec = computeLockoutRemainingSec(),
             customModels = models,
             liveMap = liveMap,
             equippedPublicModelId = equipped
@@ -100,42 +112,92 @@ class AdminStudioStore private constructor(private val appContext: Context) {
     }
 
     /**
-     * One-time secure Admin setup: validates email + password strength, hashes with PBKDF2-HMAC-SHA256
-     * + random salt, and unlocks the current session.
+     * Generates a cryptographically strong random Admin password on-device (never hardcoded!)
+     * so the owner can claim their single-user Admin account in one tap.
+     */
+    fun generateStrongAdminPassword(length: Int = 12): String {
+        val upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+        val lower = "abcdefghjkmnpqrstuvwxyz"
+        val digits = "23456789"
+        val symbols = "@#%*!"
+        val all = upper + lower + digits + symbols
+        val chars = CharArray(length.coerceAtLeast(10))
+        chars[0] = upper[secureRandom.nextInt(upper.length)]
+        chars[1] = lower[secureRandom.nextInt(lower.length)]
+        chars[2] = digits[secureRandom.nextInt(digits.length)]
+        chars[3] = symbols[secureRandom.nextInt(symbols.length)]
+        for (i in 4 until chars.size) {
+            chars[i] = all[secureRandom.nextInt(all.length)]
+        }
+        // Fisher-Yates shuffle with SecureRandom
+        for (i in chars.lastIndex downTo 1) {
+            val j = secureRandom.nextInt(i + 1)
+            val tmp = chars[i]
+            chars[i] = chars[j]
+            chars[j] = tmp
+        }
+        return String(chars)
+    }
+
+    /**
+     * One-time single-owner Admin setup.
+     * Permanently locks registration so only this 1 Admin user can access the panel.
      */
     fun claimAdminCredentials(emailRaw: String, password: String): Result<Unit> {
+        if (_snapshot.value.isAdminClaimed) {
+            return Result.failure(IllegalStateException("यह Admin Panel पहले से एक ही Admin के लिए लॉक है। कृपया उसी ईमेल-पासवर्ड से लॉगिन करें।"))
+        }
+        return writeHashedCredentials(emailRaw, password)
+    }
+
+    private fun writeHashedCredentials(emailRaw: String, password: String): Result<Unit> {
         val email = emailRaw.trim().lowercase()
         if (!email.contains("@") || !email.contains(".") || email.length < 5) {
             return Result.failure(IllegalArgumentException("कृपया सही Admin Email दर्ज करें।"))
         }
-        if (password.length < 6) {
-            return Result.failure(IllegalArgumentException("Admin Password कम से कम 6 अक्षरों का होना चाहिए।"))
+        if (password.length < 8) {
+            return Result.failure(IllegalArgumentException("सिक्योर Admin Password कम से कम 8 अक्षरों का होना चाहिए।"))
         }
-        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val salt = ByteArray(16).also { secureRandom.nextBytes(it) }
         val hash = pbkdf2Hash(password, salt)
+        val tokenPair = createSessionTokenPair()
+
         prefs.edit()
             .putString(KEY_ADMIN_EMAIL, email)
             .putString(KEY_ADMIN_HASH, Base64.encodeToString(hash, Base64.NO_WRAP))
             .putString(KEY_ADMIN_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
-            .apply()
+            .putString(KEY_SESSION_TOKEN, tokenPair.first)
+            .putString(KEY_SESSION_DIGEST, tokenPair.second)
+            .putInt(KEY_FAILED_ATTEMPTS, 0)
+            .putLong(KEY_LOCKOUT_UNTIL_MS, 0L)
+            .commit()
 
         _snapshot.value = _snapshot.value.copy(
             isAdminClaimed = true,
             adminEmail = email,
-            isUnlockedInSession = true
+            isUnlockedInSession = true,
+            singleUserLocked = true,
+            lockoutRemainingSec = 0
         )
         return Result.success(Unit)
     }
 
     /**
-     * Verifies Admin Email & Password using constant-time PBKDF2 hash comparison.
+     * Verifies single-owner Admin Email & Password using constant-time PBKDF2 comparison
+     * with brute-force lockout protection and persistent "Login Once" session token.
      */
     fun loginAdmin(emailRaw: String, password: String): Result<Unit> {
+        val remainingLock = computeLockoutRemainingSec()
+        if (remainingLock > 0) {
+            _snapshot.value = _snapshot.value.copy(lockoutRemainingSec = remainingLock)
+            return Result.failure(IllegalStateException("बहुत ज़्यादा गलत प्रयास! कृपया $remainingLock सेकंड बाद दोबारा प्रयास करें।"))
+        }
+
         val storedEmail = prefs.getString(KEY_ADMIN_EMAIL, "").orEmpty()
         val storedHashB64 = prefs.getString(KEY_ADMIN_HASH, "").orEmpty()
         val storedSaltB64 = prefs.getString(KEY_ADMIN_SALT, "").orEmpty()
         if (storedEmail.isBlank() || storedHashB64.isBlank() || storedSaltB64.isBlank()) {
-            return Result.failure(IllegalStateException("पहले Admin Email और Password सेट करें।"))
+            return Result.failure(IllegalStateException("पहले एकमात्र Admin Email और Password सेट करें।"))
         }
         val enteredEmail = emailRaw.trim().lowercase()
         val salt = Base64.decode(storedSaltB64, Base64.NO_WRAP)
@@ -148,13 +210,45 @@ class AdminStudioStore private constructor(private val appContext: Context) {
         )
         val passMatch = MessageDigest.isEqual(expectedHash, actualHash)
         if (!emailMatch || !passMatch) {
-            return Result.failure(IllegalArgumentException("गलत Admin Email या Password! कृपया फिर से जांचें।"))
+            val fails = prefs.getInt(KEY_FAILED_ATTEMPTS, 0) + 1
+            val editor = prefs.edit().putInt(KEY_FAILED_ATTEMPTS, fails)
+            var lockSec = 0
+            if (fails >= MAX_FAILED_ATTEMPTS) {
+                val untilMs = System.currentTimeMillis() + LOCKOUT_DURATION_MS
+                editor.putLong(KEY_LOCKOUT_UNTIL_MS, untilMs)
+                editor.putInt(KEY_FAILED_ATTEMPTS, 0)
+                lockSec = (LOCKOUT_DURATION_MS / 1000L).toInt()
+            }
+            editor.commit()
+            _snapshot.value = _snapshot.value.copy(lockoutRemainingSec = lockSec)
+            val errMsg = if (lockSec > 0) {
+                "5 बार गलत पासवर्ड! सुरक्षा के लिए 30 सेकंड लॉक कर दिया गया।"
+            } else {
+                "गलत Admin Email या Password! (${MAX_FAILED_ATTEMPTS - fails} प्रयास बाकी)"
+            }
+            return Result.failure(IllegalArgumentException(errMsg))
         }
-        _snapshot.value = _snapshot.value.copy(isUnlockedInSession = true)
+
+        val tokenPair = createSessionTokenPair()
+        prefs.edit()
+            .putString(KEY_SESSION_TOKEN, tokenPair.first)
+            .putString(KEY_SESSION_DIGEST, tokenPair.second)
+            .putInt(KEY_FAILED_ATTEMPTS, 0)
+            .putLong(KEY_LOCKOUT_UNTIL_MS, 0L)
+            .commit()
+
+        _snapshot.value = _snapshot.value.copy(
+            isUnlockedInSession = true,
+            lockoutRemainingSec = 0
+        )
         return Result.success(Unit)
     }
 
     fun lockAdminSession() {
+        prefs.edit()
+            .remove(KEY_SESSION_TOKEN)
+            .remove(KEY_SESSION_DIGEST)
+            .commit()
         _snapshot.value = _snapshot.value.copy(isUnlockedInSession = false)
     }
 
@@ -164,7 +258,34 @@ class AdminStudioStore private constructor(private val appContext: Context) {
         if (verified.isFailure) {
             return Result.failure(IllegalArgumentException("मौजूदा (Current) Password सही नहीं है।"))
         }
-        return claimAdminCredentials(currentEmail, newPassword)
+        return writeHashedCredentials(currentEmail, newPassword)
+    }
+
+    private fun createSessionTokenPair(): Pair<String, String> {
+        val raw = ByteArray(32).also { secureRandom.nextBytes(it) }
+        val tokenB64 = Base64.encodeToString(raw, Base64.NO_WRAP)
+        val digest = MessageDigest.getInstance("SHA-256").digest(raw)
+        val digestB64 = Base64.encodeToString(digest, Base64.NO_WRAP)
+        return tokenB64 to digestB64
+    }
+
+    private fun verifyPersistedSessionToken(): Boolean {
+        val tokenB64 = prefs.getString(KEY_SESSION_TOKEN, null) ?: return false
+        val digestB64 = prefs.getString(KEY_SESSION_DIGEST, null) ?: return false
+        return try {
+            val raw = Base64.decode(tokenB64, Base64.NO_WRAP)
+            val expected = Base64.decode(digestB64, Base64.NO_WRAP)
+            val actual = MessageDigest.getInstance("SHA-256").digest(raw)
+            raw.size == 32 && MessageDigest.isEqual(expected, actual)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun computeLockoutRemainingSec(): Int {
+        val until = prefs.getLong(KEY_LOCKOUT_UNTIL_MS, 0L)
+        val diff = until - System.currentTimeMillis()
+        return if (diff > 0L) ((diff + 999L) / 1000L).toInt() else 0
     }
 
     /**
@@ -257,14 +378,22 @@ class AdminStudioStore private constructor(private val appContext: Context) {
     fun publishLiveMap(
         title: String,
         biome: BiomeType,
-        announcementBanner: String
+        announcementBanner: String,
+        publishedWorldId: String = "",
+        mapDescription: String = "",
+        placedAssetsCount: Int = 0
     ): LiveAdminMapConfig {
         val prev = _snapshot.value.liveMap
+        val creator = _snapshot.value.adminEmail.substringBefore("@").ifBlank { "Admin Creator" }
         val updated = LiveAdminMapConfig(
-            title = title.trim().ifBlank { "Admin Live World" },
+            title = title.trim().ifBlank { "Admin Live Royal World" },
             biome = biome,
             announcementBanner = announcementBanner.trim(),
             published = true,
+            publishedWorldId = publishedWorldId.ifBlank { prev.publishedWorldId },
+            creatorLabel = creator,
+            mapDescription = mapDescription.trim().ifBlank { "एडमिन गेम इंजन में बनाया गया #1 ऑफिशियल लाइव मैप" },
+            placedAssetsCount = maxOf(prev.placedAssetsCount, placedAssetsCount),
             lastPublishedAtMs = System.currentTimeMillis(),
             liveEditsCount = prev.liveEditsCount + 1
         )
@@ -352,6 +481,10 @@ class AdminStudioStore private constructor(private val appContext: Context) {
                 biome = BiomeType.safeFromName(obj.optString("biome", BiomeType.EMERALD_VALLEY.name)),
                 announcementBanner = obj.optString("announcementBanner", ""),
                 published = obj.optBoolean("published", false),
+                publishedWorldId = obj.optString("publishedWorldId", ""),
+                creatorLabel = obj.optString("creatorLabel", ""),
+                mapDescription = obj.optString("mapDescription", ""),
+                placedAssetsCount = obj.optInt("placedAssetsCount", 0),
                 lastPublishedAtMs = obj.optLong("lastPublishedAtMs", 0L),
                 liveEditsCount = obj.optInt("liveEditsCount", 0)
             )
@@ -366,10 +499,14 @@ class AdminStudioStore private constructor(private val appContext: Context) {
             put("biome", cfg.biome.name)
             put("announcementBanner", cfg.announcementBanner)
             put("published", cfg.published)
+            put("publishedWorldId", cfg.publishedWorldId)
+            put("creatorLabel", cfg.creatorLabel)
+            put("mapDescription", cfg.mapDescription)
+            put("placedAssetsCount", cfg.placedAssetsCount)
             put("lastPublishedAtMs", cfg.lastPublishedAtMs)
             put("liveEditsCount", cfg.liveEditsCount)
         }
-        prefs.edit().putString(KEY_LIVE_MAP, obj.toString()).apply()
+        prefs.edit().putString(KEY_LIVE_MAP, obj.toString()).commit()
     }
 
     companion object {
@@ -377,9 +514,15 @@ class AdminStudioStore private constructor(private val appContext: Context) {
         private const val KEY_ADMIN_EMAIL = "admin_email"
         private const val KEY_ADMIN_HASH = "admin_pw_hash"
         private const val KEY_ADMIN_SALT = "admin_pw_salt"
+        private const val KEY_SESSION_TOKEN = "admin_session_token"
+        private const val KEY_SESSION_DIGEST = "admin_session_digest"
+        private const val KEY_FAILED_ATTEMPTS = "admin_failed_attempts"
+        private const val KEY_LOCKOUT_UNTIL_MS = "admin_lockout_until_ms"
         private const val KEY_CUSTOM_MODELS = "custom_models_json"
         private const val KEY_LIVE_MAP = "live_map_json"
         private const val KEY_EQUIPPED_MODEL_ID = "equipped_public_model_id"
+        private const val MAX_FAILED_ATTEMPTS = 5
+        private const val LOCKOUT_DURATION_MS = 30_000L
 
         @Volatile
         private var instance: AdminStudioStore? = null

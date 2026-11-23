@@ -23,8 +23,8 @@ android {
     // नया APK अपलोड कर Firestore के app_config/update में latestVersionCode
     // और apkUrl अपडेट कर दें। कोई कोड बदलने की ज़रूरत नहीं होगी!
     // =========================================================================
-    versionCode = 3
-    versionName = "1.2"
+    versionCode = 4
+    versionName = "1.3"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

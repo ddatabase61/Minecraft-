@@ -19,9 +19,16 @@ enum class EntityCategory(val label: String) {
     ZOMBIES("Zombies")
 }
 
+enum class EntityNation(val labelHindi: String, val flagColorHex: Long) {
+    BHARAT_KINGDOM("भारत राज्य", 0xFFFF9800),
+    SURYA_EMPIRE("सूर्य देश", 0xFF22E55E),
+    NEEL_REPUBLIC("नील विदेश", 0xFF42A5F5)
+}
+
 enum class AiGoal(val labelHindi: String) {
     WANDER("गाँव में घूम रहे हैं"),
     BUILD_HOUSE("नया घर बना रहे हैं"),
+    BUILD_OWN_HOME("अपना खुद का घर बना रहे हैं 🏠"),
     BUILD_MANDIR("नया मंदिर बना रहे हैं"),
     BRING_WATER("यहाँ पानी की नदी ला रहे हैं"),
     PLANT_TREES("पेड़ और बगीचा लगा रहे हैं"),
@@ -32,7 +39,10 @@ enum class AiGoal(val labelHindi: String) {
     FOLLOW_FRIEND("आपके दोस्त बनकर साथ चल रहे हैं"),
     REST_SEAT("बैठकर आराम कर रहे हैं"),
     CHAT_NPC("दूसरे दोस्त से गपशप कर रहे हैं"),
-    WATER_RELAX("पानी के किनारे टहल रहे हैं")
+    WATER_RELAX("पानी के किनारे टहल रहे हैं"),
+    MARRY_CEREMONY("शादी-विवाह समारोह में हैं 💍"),
+    FAMILY_TIME("अपने परिवार के साथ हैं ❤️"),
+    BORDER_WAR("देश-विदेश की लड़ाई में हैं ⚔️")
 }
 
 enum class EntityKind(
@@ -113,7 +123,9 @@ enum class EntityKind(
     HANUMAN("Shri Hanuman", 0xFFFF7043, EntityCategory.HEROES, isCompanion = true, isTalkableAi = true, roleSummaryHindi = "महाबली श्री हनुमान जो हर संकट से बचाते हैं", soundStyle = "HERO", maxHp = 160, speed = 3.0f, height = 1.9f),
     BHEEM("Bheem", 0xFFFF9800, EntityCategory.HEROES, isCompanion = true, isTalkableAi = true, roleSummaryHindi = "शक्तिशाली और मिलनसार भीम जो हमेशा दोस्तों की मदद करता है", soundStyle = "HERO", maxHp = 120, speed = 2.7f, height = 1.75f),
     RAJU("Raju", 0xFFFFCA28, EntityCategory.HEROES, isCompanion = true, isTalkableAi = true, roleSummaryHindi = "चंचल और समझदार दोस्त राजू", soundStyle = "HERO", maxHp = 90, speed = 2.8f, height = 1.45f),
-    VILLAGER("Villager (ग्रामवासी)", 0xFF795548, EntityCategory.SOCIETY, isTalkableAi = true, roleSummaryHindi = "गाँव का मिलनसार निवासी", soundStyle = "HERO", maxHp = 80, speed = 2.0f, height = 1.8f),
+    VILLAGER("Villager (ग्रामवासी)", 0xFF795548, EntityCategory.SOCIETY, isTalkableAi = true, roleSummaryHindi = "गाँव का मिलनसार निवासी जो अपना घर और परिवार बसाता है", soundStyle = "HERO", maxHp = 80, speed = 2.0f, height = 1.8f),
+    DESH_SOLDIER("Bharat Sainik (देश सैनिक)", 0xFFFF9800, EntityCategory.SOCIETY, isTalkableAi = true, roleSummaryHindi = "अपने देश और गाँव की रक्षा करने वाला बहादुर सैनिक", soundStyle = "HERO", maxHp = 135, speed = 2.65f, height = 1.86f),
+    VIDESH_WARRIOR("Videsh Yoddha (विदेश योद्धा)", 0xFF42A5F5, EntityCategory.SOCIETY, isTalkableAi = true, roleSummaryHindi = "विदेश राज्य से आया योद्धा जो शांति में व्यापार और युद्ध में लड़ाई करता है", soundStyle = "HERO", maxHp = 135, speed = 2.65f, height = 1.86f),
 
     // --- Animals & Birds ---
     COW("Cow (गौ)", 0xFFF5F5F5, EntityCategory.ANIMALS, soundStyle = "CATTLE", maxHp = 60, speed = 1.5f, radius = 0.55f, height = 1.35f),
@@ -160,6 +172,11 @@ data class VoxelEntity(
     var socialNeed: Float = 40f,
     var isResting: Boolean = false,
     var socialPartnerId: Int? = null,
+    var nation: EntityNation = EntityNation.BHARAT_KINGDOM,
+    var spouseId: Int? = null,
+    var hasBuiltOwnHome: Boolean = false,
+    var homeX: Float = x,
+    var homeZ: Float = z,
     val customName: String? = null,
     val customModelId: String? = null,
     val customMesh: Parsed3DModelMesh? = null,
@@ -224,6 +241,8 @@ data class CombatEvents(
     val playerDamaged: Boolean = false,
     val pujaBellTriggered: Boolean = false,
     val humanWorkSoundTriggered: Boolean = false,
+    val weddingTriggered: Boolean = false,
+    val warClashTriggered: Boolean = false,
     val aiActivityToast: String? = null
 )
 
@@ -252,10 +271,15 @@ class VoxelEntityManager(seed: Long) {
     @Volatile var playerCustomModel: AdminCustom3DModel? = null
     @Volatile var playerCustomMesh: Parsed3DModelMesh? = null
     @Volatile var preferredTalkTargetId: Int? = null
+    @Volatile var warModeEnabled: Boolean = false
+    @Volatile var weddingsCount: Int = 0
+        private set
     private var healthRegenTimer = 0f
     private var zombieAutoSpawnTimer = 0f
     private var pujaBellCooldown = 0f
     private var humanWorkSoundCooldown = 0f
+    private var weddingAutoTimer = 26f
+    private var warClashSoundCooldown = 0f
     private var globalAnimClock = 0f
 
     // Vertex format: [x, y, z, r, g, b, shade] (7 floats per vertex)
@@ -281,6 +305,11 @@ class VoxelEntityManager(seed: Long) {
                 EntityKind.AMIR_SETH to (-3f to 10f),
                 EntityKind.GARIB_KISAN to (10f to -3f),
                 EntityKind.VILLAGER to (15f - spawnX to 6f - spawnZ),
+                EntityKind.VILLAGER to (4f to 11f),
+                EntityKind.DESH_SOLDIER to (-12f to 12f),
+                EntityKind.DESH_SOLDIER to (-10f to 15f),
+                EntityKind.VIDESH_WARRIOR to (18f to -12f),
+                EntityKind.VIDESH_WARRIOR to (21f to -10f),
                 // Iconic Mythic & Cartoon Friends
                 EntityKind.KRISHNA to (4f to -5f),
                 EntityKind.RAM to (-4f to -6f),
@@ -312,6 +341,11 @@ class VoxelEntityManager(seed: Long) {
                 val groundY = world.findSpawnY(floor(ex).toInt(), floor(ez).toInt())
                 val ey = if (kind.isFlying) groundY + 5.5f + rng.nextFloat() * 3.5f else groundY
                 val initialGoal = defaultGoalFor(kind)
+                val entityNation = when (kind) {
+                    EntityKind.VIDESH_WARRIOR -> EntityNation.NEEL_REPUBLIC
+                    EntityKind.AMIR_SETH -> EntityNation.SURYA_EMPIRE
+                    else -> EntityNation.BHARAT_KINGDOM
+                }
                 entities.add(
                     VoxelEntity(
                         id = nextId++,
@@ -327,7 +361,10 @@ class VoxelEntityManager(seed: Long) {
                         isFriend = kind.isCompanion,
                         targetX = ex,
                         targetZ = ez,
-                        buildCooldown = 14f + rng.nextFloat() * 14f
+                        buildCooldown = 14f + rng.nextFloat() * 14f,
+                        nation = entityNation,
+                        homeX = ex,
+                        homeZ = ez
                     )
                 )
             }
@@ -909,6 +946,130 @@ class VoxelEntityManager(seed: Long) {
         }
     }
 
+    fun spawnPlaneContrailParticles(x: Float, y: Float, z: Float, boost: Boolean) {
+        synchronized(lock) {
+            val count = if (boost) 6 else 3
+            repeat(count) {
+                if (particles.size < 240) {
+                    particles.add(
+                        VoxelParticle(
+                            x = x + (rng.nextFloat() - 0.5f) * 0.45f,
+                            y = y + (rng.nextFloat() - 0.5f) * 0.25f,
+                            z = z + (rng.nextFloat() - 0.5f) * 0.45f,
+                            vx = (rng.nextFloat() - 0.5f) * 1.4f,
+                            vy = (rng.nextFloat() - 0.5f) * 0.6f,
+                            vz = (rng.nextFloat() - 0.5f) * 1.4f,
+                            r = if (boost) 1.0f else 0.92f,
+                            g = if (boost) 0.55f else 0.96f,
+                            b = if (boost) 0.14f else 1.0f,
+                            size = if (boost) 0.19f else 0.13f,
+                            life = if (boost) 0.36f else 0.65f,
+                            floatsUp = false
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Triggers an Indian Wedding (शादी-विवाह) ceremony between two unmarried society humans!
+     * Builds a floral 3D Wedding Mandap, pairs them as lifelong spouses, bursts golden/pink petals, and returns the toast.
+     */
+    fun triggerWeddingCeremony(world: VoxelChunkWorld, nearX: Float, nearZ: Float): String {
+        synchronized(lock) {
+            val candidates = entities.filter {
+                it.kind.category == EntityCategory.SOCIETY &&
+                    it.spouseId == null &&
+                    it.kind != EntityKind.DESH_SOLDIER &&
+                    it.kind != EntityKind.VIDESH_WARRIOR
+            }.sortedBy { hypot(it.x - nearX, it.z - nearZ) }
+
+            val a: VoxelEntity
+            val b: VoxelEntity
+            if (candidates.size >= 2) {
+                a = candidates[0]
+                b = candidates[1]
+            } else {
+                val gy = world.findSpawnY(floor(nearX).toInt(), floor(nearZ).toInt())
+                a = VoxelEntity(nextId++, EntityKind.VILLAGER, nearX - 1.2f, gy, nearZ + 4f, customName = "वर (Groom)")
+                b = VoxelEntity(nextId++, EntityKind.VILLAGER, nearX + 1.2f, gy, nearZ + 4f, customName = "वधू (Bride)")
+                entities.add(a)
+                entities.add(b)
+            }
+
+            val mx = floor((a.x + b.x) * 0.5f).toInt()
+            val mz = floor((a.z + b.z) * 0.5f).toInt()
+            world.buildWeddingMandap(mx, mz)
+            val my = world.findSpawnY(mx, mz)
+            a.x = mx - 0.8f; a.y = my; a.z = mz + 0.5f; a.yaw = 1.57f
+            b.x = mx + 0.8f; b.y = my; b.z = mz + 0.5f; b.yaw = -1.57f
+            a.spouseId = b.id
+            b.spouseId = a.id
+            a.homeX = mx.toFloat(); a.homeZ = mz.toFloat()
+            b.homeX = mx.toFloat(); b.homeZ = mz.toFloat()
+            a.goal = AiGoal.MARRY_CEREMONY; a.goalTimer = 14f; a.talkingTimer = 5f
+            b.goal = AiGoal.MARRY_CEREMONY; b.goalTimer = 14f; b.talkingTimer = 5f
+            weddingsCount++
+
+            spawnBurstLocked(mx.toFloat(), my + 2.2f, mz.toFloat(), 1.0f, 0.35f, 0.65f, 16)
+            spawnBurstLocked(mx.toFloat(), my + 2.6f, mz.toFloat(), 1.0f, 0.85f, 0.22f, 14)
+            return "💍 शुभ विवाह! ${a.effectiveName} और ${b.effectiveName} की शादी सम्पन्न हुई!"
+        }
+    }
+
+    fun toggleInternationalWar(): Boolean {
+        synchronized(lock) {
+            warModeEnabled = !warModeEnabled
+            if (warModeEnabled) {
+                for (e in entities) {
+                    if (e.kind == EntityKind.DESH_SOLDIER || e.kind == EntityKind.VIDESH_WARRIOR) {
+                        e.goal = AiGoal.BORDER_WAR
+                        e.goalTimer = 24f
+                    }
+                }
+            } else {
+                for (e in entities) {
+                    if (e.goal == AiGoal.BORDER_WAR) {
+                        e.goal = AiGoal.WANDER
+                        e.goalTimer = 6f
+                    }
+                }
+            }
+            return warModeEnabled
+        }
+    }
+
+    fun spawnNationSquad(world: VoxelChunkWorld, player: VoxelPlayerController, isVidesh: Boolean, count: Int = 3) {
+        synchronized(lock) {
+            val (fx, _, fz) = player.forwardVector()
+            val kind = if (isVidesh) EntityKind.VIDESH_WARRIOR else EntityKind.DESH_SOLDIER
+            val nation = if (isVidesh) EntityNation.NEEL_REPUBLIC else EntityNation.BHARAT_KINGDOM
+            repeat(count) { idx ->
+                if (entities.size < MAX_ENTITIES) {
+                    val spread = (idx - 1) * 1.8f
+                    val ex = player.x + fx * 6f - fz * spread
+                    val ez = player.z + fz * 6f + fx * spread
+                    val ey = world.findSpawnY(floor(ex).toInt(), floor(ez).toInt())
+                    entities.add(
+                        VoxelEntity(
+                            id = nextId++,
+                            kind = kind,
+                            x = ex,
+                            y = ey,
+                            z = ez,
+                            yaw = player.yaw + 3.14f,
+                            goal = if (warModeEnabled) AiGoal.BORDER_WAR else AiGoal.ROYAL_PATROL,
+                            nation = nation,
+                            homeX = ex,
+                            homeZ = ez
+                        )
+                    )
+                }
+            }
+        }
+    }
+
     fun stepSimulation(
         world: VoxelChunkWorld,
         player: VoxelPlayerController,
@@ -921,12 +1082,50 @@ class VoxelEntityManager(seed: Long) {
         var playerDamaged = false
         var pujaBellTriggered = false
         var humanWorkSoundTriggered = false
+        var weddingTriggered = false
+        var warClashTriggered = false
         var aiActivityToast: String? = null
 
         synchronized(lock) {
             globalAnimClock += dt
             pujaBellCooldown = (pujaBellCooldown - dt).coerceAtLeast(0f)
             humanWorkSoundCooldown = (humanWorkSoundCooldown - dt).coerceAtLeast(0f)
+            warClashSoundCooldown = (warClashSoundCooldown - dt).coerceAtLeast(0f)
+
+            // Autonomous Real-World Marriages (Vivah): unmarried humans occasionally fall in love & marry!
+            weddingAutoTimer -= dt
+            if (weddingAutoTimer <= 0f) {
+                weddingAutoTimer = 55f + rng.nextFloat() * 35f
+                val bachelors = entities.filter {
+                    it.kind.category == EntityCategory.SOCIETY &&
+                        it.spouseId == null &&
+                        it.kind != EntityKind.DESH_SOLDIER &&
+                        it.kind != EntityKind.VIDESH_WARRIOR &&
+                        hypot(it.x - player.x, it.z - player.z) < 42f
+                }
+                if (bachelors.size >= 2) {
+                    val a = bachelors[0]
+                    val b = bachelors[1]
+                    val mx = floor((a.x + b.x) * 0.5f).toInt()
+                    val mz = floor((a.z + b.z) * 0.5f).toInt()
+                    if (hypot((mx - player.x).toDouble(), (mz - player.z).toDouble()) > 4.5) {
+                        world.buildWeddingMandap(mx, mz)
+                        val my = world.findSpawnY(mx, mz)
+                        a.x = mx - 0.8f; a.y = my; a.z = mz + 0.5f
+                        b.x = mx + 0.8f; b.y = my; b.z = mz + 0.5f
+                        a.spouseId = b.id; b.spouseId = a.id
+                        a.homeX = mx.toFloat(); a.homeZ = mz.toFloat()
+                        b.homeX = mx.toFloat(); b.homeZ = mz.toFloat()
+                        a.goal = AiGoal.MARRY_CEREMONY; a.goalTimer = 14f; a.talkingTimer = 5f
+                        b.goal = AiGoal.MARRY_CEREMONY; b.goalTimer = 14f; b.talkingTimer = 5f
+                        weddingsCount++
+                        weddingTriggered = true
+                        spawnBurstLocked(mx.toFloat(), my + 2.2f, mz.toFloat(), 1.0f, 0.35f, 0.65f, 16)
+                        spawnBurstLocked(mx.toFloat(), my + 2.6f, mz.toFloat(), 1.0f, 0.85f, 0.22f, 14)
+                        aiActivityToast = "💍 गाँव में विवाह! ${a.effectiveName} और ${b.effectiveName} ने शादी की!"
+                    }
+                }
+            }
 
             if (playerHealth < 10) {
                 healthRegenTimer += dt
@@ -1179,22 +1378,65 @@ class VoxelEntityManager(seed: Long) {
                                         pujaBellTriggered = true
                                     }
                                 }
-                                AiGoal.BUILD_HOUSE -> {
+                                AiGoal.BUILD_HOUSE, AiGoal.BUILD_OWN_HOME -> {
                                     if (humanWorkSoundCooldown <= 0f && distP < 24f) {
                                         humanWorkSoundCooldown = 3.2f
                                         humanWorkSoundTriggered = true
                                     }
-                                    if (e.buildCooldown <= 0f && distP < 34f) {
+                                    if (e.buildCooldown <= 0f && distP < 36f) {
                                         e.buildCooldown = 55f
                                         val bx = floor(e.x + 3f).toInt()
                                         val bz = floor(e.z + 3f).toInt()
                                         if (hypot((bx - player.x).toDouble(), (bz - player.z).toDouble()) > 4.5) {
                                             world.buildMiniStructure(bx, bz, isMandir = false)
+                                            e.hasBuiltOwnHome = true
+                                            e.homeX = bx.toFloat()
+                                            e.homeZ = bz.toFloat()
                                             spawnBurstLocked(bx.toFloat(), e.y + 2f, bz.toFloat(), 1.0f, 0.85f, 0.35f, 12)
-                                            aiActivityToast = "${e.kind.displayName} ने खुद नया घर बनाया!"
+                                            aiActivityToast = "${e.effectiveName} ने खुद का नया घर बनाया! 🏠"
                                         }
-                                        e.goal = AiGoal.REST_SEAT
-                                        e.goalTimer = 7f
+                                        e.goal = if (e.spouseId != null) AiGoal.FAMILY_TIME else AiGoal.REST_SEAT
+                                        e.goalTimer = 8f
+                                    }
+                                }
+                                AiGoal.MARRY_CEREMONY -> {
+                                    e.animPhase += dt * 4.5f
+                                    if (rng.nextFloat() < dt * 2.5f) {
+                                        spawnBurstLocked(e.x, e.y + 2.1f, e.z, 1.0f, 0.42f, 0.72f, 2)
+                                    }
+                                }
+                                AiGoal.FAMILY_TIME -> {
+                                    val spouse = entities.firstOrNull { it.id == e.spouseId }
+                                    if (spouse != null) {
+                                        e.targetX = spouse.x + 1.1f
+                                        e.targetZ = spouse.z
+                                        if (rng.nextFloat() < dt * 0.9f) {
+                                            spawnBurstLocked(e.x, e.y + 2.0f, e.z, 1.0f, 0.32f, 0.55f, 2)
+                                        }
+                                    }
+                                }
+                                AiGoal.BORDER_WAR -> {
+                                    // Desh-Videsh Warriors actively battle rival nation soldiers!
+                                    val rival = entities.firstOrNull { other ->
+                                        other.id != e.id &&
+                                            other.nation != e.nation &&
+                                            (other.kind == EntityKind.DESH_SOLDIER || other.kind == EntityKind.VIDESH_WARRIOR) &&
+                                            hypot(other.x - e.x, other.z - e.z) < 38f
+                                    }
+                                    if (rival != null) {
+                                        e.targetX = rival.x
+                                        e.targetZ = rival.z
+                                        val rd = hypot(rival.x - e.x, rival.z - e.z)
+                                        if (rd < 2.2f && e.attackCooldown <= 0f) {
+                                            e.attackCooldown = 1.05f
+                                            rival.hitFlash = 0.25f
+                                            rival.hp = (rival.hp - 14).coerceAtLeast(18) // Dramatic sparring/war clash
+                                            spawnBurstLocked((e.x + rival.x) * 0.5f, e.y + 1.2f, (e.z + rival.z) * 0.5f, 1.0f, 0.82f, 0.22f, 6)
+                                            if (warClashSoundCooldown <= 0f && distP < 28f) {
+                                                warClashSoundCooldown = 0.95f
+                                                warClashTriggered = true
+                                            }
+                                        }
                                     }
                                 }
                                 AiGoal.BUILD_MANDIR -> {
@@ -1341,6 +1583,8 @@ class VoxelEntityManager(seed: Long) {
             playerDamaged = playerDamaged,
             pujaBellTriggered = pujaBellTriggered,
             humanWorkSoundTriggered = humanWorkSoundTriggered,
+            weddingTriggered = weddingTriggered,
+            warClashTriggered = warClashTriggered,
             aiActivityToast = aiActivityToast
         )
     }
@@ -1439,10 +1683,45 @@ class VoxelEntityManager(seed: Long) {
                     e.targetZ = world.mandirCenterZ + 4f
                 }
             }
+            EntityKind.DESH_SOLDIER, EntityKind.VIDESH_WARRIOR -> {
+                if (warModeEnabled) {
+                    val rival = entities.firstOrNull {
+                        it.nation != e.nation &&
+                            (it.kind == EntityKind.DESH_SOLDIER || it.kind == EntityKind.VIDESH_WARRIOR)
+                    }
+                    e.goal = AiGoal.BORDER_WAR
+                    e.targetX = rival?.x ?: (8f + (rng.nextFloat() - 0.5f) * 26f)
+                    e.targetZ = rival?.z ?: (8f + (rng.nextFloat() - 0.5f) * 26f)
+                } else {
+                    e.goal = AiGoal.ROYAL_PATROL
+                    e.targetX = e.homeX + (rng.nextFloat() - 0.5f) * 18f
+                    e.targetZ = e.homeZ + (rng.nextFloat() - 0.5f) * 18f
+                }
+            }
             else -> {
-                e.goal = if (roll < 0.35f) AiGoal.DO_PUJA else AiGoal.WANDER
-                e.targetX = if (e.goal == AiGoal.DO_PUJA) world.mandirCenterX.toFloat() else 8f + (rng.nextFloat() - 0.5f) * 24f
-                e.targetZ = if (e.goal == AiGoal.DO_PUJA) world.mandirCenterZ + 4f else 8f + (rng.nextFloat() - 0.5f) * 24f
+                when {
+                    !e.hasBuiltOwnHome && roll < 0.34f -> {
+                        e.goal = AiGoal.BUILD_OWN_HOME
+                        e.targetX = e.homeX + (rng.nextFloat() - 0.5f) * 22f
+                        e.targetZ = e.homeZ + (rng.nextFloat() - 0.5f) * 22f
+                    }
+                    e.spouseId != null && roll < 0.65f -> {
+                        val sp = entities.firstOrNull { it.id == e.spouseId }
+                        e.goal = AiGoal.FAMILY_TIME
+                        e.targetX = sp?.x ?: e.homeX
+                        e.targetZ = sp?.z ?: e.homeZ
+                    }
+                    roll < 0.80f -> {
+                        e.goal = AiGoal.DO_PUJA
+                        e.targetX = world.mandirCenterX.toFloat()
+                        e.targetZ = world.mandirCenterZ + 4f
+                    }
+                    else -> {
+                        e.goal = AiGoal.WANDER
+                        e.targetX = 8f + (rng.nextFloat() - 0.5f) * 24f
+                        e.targetZ = 8f + (rng.nextFloat() - 0.5f) * 24f
+                    }
+                }
             }
         }
     }
@@ -1490,8 +1769,74 @@ class VoxelEntityManager(seed: Long) {
     }
 
     private fun emitPlayerAvatar(p: VoxelPlayerController, armSwingProgress: Float) {
+        val plane = p.activePlane
         val bike = p.activeBike
         val sittingWater = p.sittingOnWater
+
+        // --- 0. Render Full 3D Flyable Airplane (Fuselage, Swept Wings, Tail Fin, Cockpit, Jet Engines/Propeller!) ---
+        if (plane != null) {
+            val c = cos(p.yaw)
+            val s = sin(p.yaw)
+            val rollSin = sin(p.planeRollRad)
+            val pitchSin = sin(p.planePitchRad)
+            val (fr, fg, fb) = hexToRgb(plane.fuselageColorHex)
+            val (wr, wg, wb) = hexToRgb(plane.wingColorHex)
+            val (ar, ag, ab) = hexToRgb(plane.accentColorHex)
+            val (cr, cg, cb) = hexToRgb(plane.canopyColorHex)
+
+            fun planePart(lx: Float, ly: Float, lz: Float, w: Float, h: Float, d: Float, r: Float, g: Float, b: Float) {
+                val dyRoll = lx * rollSin * 0.72f + lz * pitchSin * 0.65f
+                val wx = p.x + lx * c + lz * s
+                val wz = p.z + lx * s - lz * c
+                emitBox(wx, p.y + ly + dyRoll, wz, w, h, d, p.yaw, r, g, b)
+            }
+
+            val isJetliner = plane.name == "JUMBO_747"
+            val fuseLen = if (isJetliner) 4.4f else 3.4f
+            val wingSpan = if (isJetliner) 5.8f else 4.4f
+
+            // Main Fuselage Body + Tapered Nose Cone + Accent Stripe
+            planePart(0f, 1.05f, 0f, 0.92f, 0.88f, fuseLen, fr, fg, fb)
+            planePart(0f, 0.98f, fuseLen * 0.5f + 0.42f, 0.62f, 0.58f, 0.95f, fr, fg, fb) // Nose
+            planePart(0f, 0.95f, fuseLen * 0.5f + 0.96f, 0.34f, 0.34f, 0.42f, ar, ag, ab) // Nose tip
+            planePart(0f, 1.06f, 0.05f, 0.96f, 0.18f, fuseLen * 0.88f, ar, ag, ab) // Side livery stripe
+
+            // Glass Cockpit Canopy + Pilot Head Visible Inside
+            planePart(0f, 1.56f, fuseLen * 0.24f, 0.66f, 0.42f, 1.15f, cr, cg, cb)
+            planePart(0f, 1.44f, fuseLen * 0.24f, 0.34f, 0.34f, 0.34f, 0.84f, 0.64f, 0.49f) // Pilot head
+
+            // Wide Swept Main Wings + Red/Green Wingtip Navigation Lights
+            planePart(0f, 0.92f, -0.05f, wingSpan, 0.16f, 1.25f, wr, wg, wb)
+            planePart(-wingSpan * 0.48f, 1.02f, -0.15f, 0.22f, 0.34f, 0.85f, ar, ag, ab) // Left winglet
+            planePart(wingSpan * 0.48f, 1.02f, -0.15f, 0.22f, 0.34f, 0.85f, ar, ag, ab) // Right winglet
+            planePart(-wingSpan * 0.50f, 1.12f, 0.10f, 0.14f, 0.14f, 0.14f, 1.0f, 0.15f, 0.15f) // Port red light
+            planePart(wingSpan * 0.50f, 1.12f, 0.10f, 0.14f, 0.14f, 0.14f, 0.15f, 1.0f, 0.30f) // Starboard green light
+
+            // Vertical Tail Fin + Horizontal Tail Stabilizers
+            planePart(0f, 1.85f, -fuseLen * 0.45f, 0.16f, 1.15f, 0.95f, ar, ag, ab)
+            planePart(0f, 1.15f, -fuseLen * 0.46f, 2.20f, 0.14f, 0.68f, wr, wg, wb)
+
+            // Twin Under-Wing Jet Turbines OR Spinning Front Propeller + Glowing Afterburner Flame!
+            if (plane.hasPropeller) {
+                val spinW = 0.12f + kotlin.math.abs(sin(p.planePropSpin)) * 1.15f
+                val spinH = 0.12f + kotlin.math.abs(cos(p.planePropSpin)) * 1.15f
+                planePart(0f, 0.96f, fuseLen * 0.5f + 1.22f, spinW, spinH, 0.08f, 0.18f, 0.18f, 0.20f)
+                // Classic biplane upper wing struts
+                planePart(0f, 1.88f, 0.15f, wingSpan * 0.92f, 0.12f, 0.92f, wr, wg, wb)
+            } else {
+                val engX = if (isJetliner) 1.55f else 0.72f
+                planePart(-engX, 0.66f, 0.12f, 0.42f, 0.42f, 1.05f, 0.22f, 0.26f, 0.30f)
+                planePart(engX, 0.66f, 0.12f, 0.42f, 0.42f, 1.05f, 0.22f, 0.26f, 0.30f)
+                val flameLen = if (p.planeBoostTimer > 0f) 1.25f else 0.45f
+                val flameR = if (p.planeBoostTimer > 0f) 0.15f else 1.0f
+                val flameG = if (p.planeBoostTimer > 0f) 0.88f else 0.58f
+                val flameB = if (p.planeBoostTimer > 0f) 1.0f else 0.14f
+                planePart(-engX, 0.66f, -0.45f - flameLen * 0.45f, 0.26f, 0.26f, flameLen, flameR, flameG, flameB)
+                planePart(engX, 0.66f, -0.45f - flameLen * 0.45f, 0.26f, 0.26f, flameLen, flameR, flameG, flameB)
+            }
+            return
+        }
+
         val stride = if (bike != null || sittingWater) 0f else sin(p.walkBobPhase * 2f) * 0.22f * p.moveSpeedFraction
         val swimBob = when {
             sittingWater -> sin(p.waterSitBobPhase * 2.2f) * 0.045f
@@ -1830,11 +2175,15 @@ class VoxelEntityManager(seed: Long) {
                     e.kind == EntityKind.RAM -> Triple(0.96f, 0.62f, 0.14f)
                     e.kind == EntityKind.HANUMAN -> Triple(1.0f, 0.38f, 0.08f)
                     e.kind == EntityKind.BHEEM -> Triple(1.0f, 0.56f, 0.08f)
+                    e.kind == EntityKind.DESH_SOLDIER -> Triple(0.95f, 0.46f, 0.08f) // Bharat Saffron Armor
+                    e.kind == EntityKind.VIDESH_WARRIOR -> Triple(0.16f, 0.42f, 0.82f) // Videsh Royal Blue Armor
                     e.kind == EntityKind.RAJU -> Triple(1.0f, 0.82f, 0.20f)
                     else -> Triple(0.28f, 0.52f, 0.78f)
                 }
                 val (legR, legG, legB) = when {
                     e.customAccentHex != null -> hexToRgb(e.customAccentHex)
+                    e.kind == EntityKind.DESH_SOLDIER -> Triple(0.14f, 0.48f, 0.24f)
+                    e.kind == EntityKind.VIDESH_WARRIOR -> Triple(0.24f, 0.28f, 0.38f)
                     e.kind == EntityKind.RAJA -> Triple(1.0f, 0.84f, 0.20f)
                     e.kind == EntityKind.PUJARI || e.kind == EntityKind.GARIB_KISAN -> Triple(0.95f, 0.93f, 0.87f)
                     e.kind == EntityKind.KRISHNA -> Triple(1.0f, 0.82f, 0.14f)

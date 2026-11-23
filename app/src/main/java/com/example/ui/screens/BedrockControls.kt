@@ -384,6 +384,7 @@ fun BedrockTopCenterBar(
     goldCoins: Int,
     adminUnlocked: Boolean,
     ridingBike: Boolean,
+    flyingPlane: Boolean = false,
     onOpenBikes: () -> Unit,
     onOpenAdmin: () -> Unit,
     onOpenRealEstate: () -> Unit,
@@ -400,10 +401,10 @@ fun BedrockTopCenterBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         BedrockTopSquareButton(
-            icon = Icons.Rounded.TwoWheeler,
-            contentDescription = "Superbike Garage (6 Rideable Bikes)",
-            active = ridingBike,
-            badgeText = "BIKE",
+            icon = if (flyingPlane) Icons.Rounded.FlightTakeoff else Icons.Rounded.TwoWheeler,
+            contentDescription = "Superbikes & 3D Airplanes Hangar",
+            active = ridingBike || flyingPlane,
+            badgeText = if (flyingPlane) "JET" else "RIDE",
             onClick = onOpenBikes,
             tag = "top_bikes_button"
         )
@@ -838,7 +839,7 @@ private fun BedrockTactileTapButton(
 }
 
 @Composable
-private fun BedrockTactileHoldButton(
+fun BedrockTactileHoldButton(
     icon: ImageVector,
     contentDescription: String,
     onHoldChanged: (Boolean) -> Unit,

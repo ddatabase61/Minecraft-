@@ -11,6 +11,8 @@ import com.example.data.AdminStudioSnapshot
 import com.example.data.AdminStudioStore
 import com.example.data.CustomModelRole
 import com.example.data.WorldDataSource
+import com.example.data.model.AdminEngineAsset
+import com.example.data.model.AircraftType
 import com.example.data.model.BikeType
 import com.example.data.model.BiomeType
 import com.example.data.model.BlockType
@@ -135,6 +137,12 @@ data class GameWorldUiState(
     val activeBike: BikeType? = null,
     val bikeSpeedKmh: Int = 0,
     val bikeNitroActive: Boolean = false,
+    val activePlane: AircraftType? = null,
+    val planeSpeedKmh: Int = 0,
+    val planeAltitude: Int = 0,
+    val planeBoostActive: Boolean = false,
+    val warActive: Boolean = false,
+    val weddingsCount: Int = 0,
     val sprinting: Boolean = false,
     val sneaking: Boolean = false,
     val zombiesDefeated: Int = 0,
@@ -144,6 +152,13 @@ data class GameWorldUiState(
     val minimapBlips: List<MinimapBlip> = emptyList(),
     val minimapColors: IntArray = IntArray(0),
     val targetBlock: BlockType? = null,
+    val targetBlockX: Int? = null,
+    val targetBlockY: Int? = null,
+    val targetBlockZ: Int? = null,
+    val adminEngineMode: Boolean = false,
+    val selectedEngineAsset: AdminEngineAsset = AdminEngineAsset.OAK_TREE,
+    val engineBrushRadius: Int = 2,
+    val enginePlacedCount: Int = 0,
     val flying: Boolean = false,
     val jetBootsUnlocked: Boolean = false,
     val goldCoins: Int = 500,
@@ -446,6 +461,9 @@ class GameViewModel(
                 playerZ = t.z,
                 playerYaw = t.yaw,
                 targetBlock = t.targetBlock,
+                targetBlockX = t.targetBlockX,
+                targetBlockY = t.targetBlockY,
+                targetBlockZ = t.targetBlockZ,
                 flying = t.flying,
                 inWater = t.inWater,
                 isUnderwater = t.isUnderwater,
@@ -455,6 +473,12 @@ class GameViewModel(
                 activeBike = t.activeBike,
                 bikeSpeedKmh = t.bikeSpeedKmh,
                 bikeNitroActive = t.bikeNitroActive,
+                activePlane = t.activePlane,
+                planeSpeedKmh = t.planeSpeedKmh,
+                planeAltitude = t.planeAltitude,
+                planeBoostActive = t.planeBoostActive,
+                warActive = t.warActive,
+                weddingsCount = t.weddingsCount,
                 oxygen = t.oxygen,
                 sprinting = t.sprinting,
                 sneaking = t.sneaking,
@@ -614,6 +638,119 @@ class GameViewModel(
                     statusToast = "⚡ ${bike.displayName} NITRO TURBO BOOST!"
                 )
             }
+        }
+    }
+
+    // --- 3D FLYABLE AIRPLANES (हवाई जहाज़) ---
+
+    fun mountPlane(plane: AircraftType) {
+        val controller = playerController ?: return
+        controller.mountPlane(plane)
+        soundEngine.playPlaneStart(plane.soundStyle)
+        if (_state.value.cameraMode == CameraMode.FIRST_PERSON) {
+            glRenderer?.cameraMode = CameraMode.THIRD_PERSON_BACK
+            controller.resetCameraLevel()
+        }
+        _state.update {
+            val nextCam = if (it.cameraMode == CameraMode.FIRST_PERSON) CameraMode.THIRD_PERSON_BACK else it.cameraMode
+            it.copy(
+                activePlane = plane,
+                activeBike = null,
+                bikeSpeedKmh = 0,
+                bikeNitroActive = false,
+                sittingOnWater = false,
+                flying = true,
+                sneaking = false,
+                cameraMode = nextCam,
+                thirdPersonCamera = nextCam != CameraMode.FIRST_PERSON,
+                statusToast = "✈️ ${plane.displayName} टेकऑफ़! ऊपर/नीचे और जॉयस्टिक से उड़ाएँ!"
+            )
+        }
+    }
+
+    fun dismountPlane() {
+        val controller = playerController ?: return
+        val world = chunkWorld
+        val prevPlane = controller.activePlane ?: return
+        controller.dismountPlane(world)
+        _state.update {
+            it.copy(
+                activePlane = null,
+                planeSpeedKmh = 0,
+                planeBoostActive = false,
+                flying = controller.flying,
+                statusToast = "✈️ ${prevPlane.displayName} सुरक्षित लैंड हो गया!"
+            )
+        }
+    }
+
+    fun triggerPlaneBoost() {
+        val controller = playerController ?: return
+        val plane = controller.activePlane ?: return
+        if (controller.triggerPlaneBoost()) {
+            soundEngine.playPlaneAfterburner()
+            entityManager?.spawnPlaneContrailParticles(controller.x, controller.y, controller.z, boost = true)
+            _state.update {
+                it.copy(
+                    planeBoostActive = true,
+                    statusToast = "🔥 ${plane.displayName} AFTERBURNER TURBO!"
+                )
+            }
+        }
+    }
+
+    fun setPlaneClimbHeld(held: Boolean) {
+        playerController?.planeClimbHeld = held
+    }
+
+    fun setPlaneDescendHeld(held: Boolean) {
+        playerController?.planeDescendHeld = held
+    }
+
+    fun firePlaneSkyBlaster() {
+        val controller = playerController ?: return
+        val entities = entityManager ?: return
+        entities.fireGun(controller)
+        soundEngine.playGunshot()
+        _state.update {
+            it.copy(
+                recoilTick = it.recoilTick + 1,
+                statusToast = "🚀 Sky Missile Fired!"
+            )
+        }
+    }
+
+    // --- HUMAN CIVILIZATION: WEDDINGS & DESH-VIDESH WAR ---
+
+    fun triggerVillageWedding() {
+        val world = chunkWorld ?: return
+        val entities = entityManager ?: return
+        val (bx, bz) = frontTargetCoords(7.0f) ?: return
+        val msg = entities.triggerWeddingCeremony(world, bx.toFloat(), bz.toFloat())
+        soundEngine.playWeddingShehnai()
+        _state.update {
+            it.copy(
+                weddingsCount = entities.weddingsCount,
+                syncStatus = CloudSyncStatus.UNSAVED,
+                statusToast = msg
+            )
+        }
+        refreshTalkableNpcs()
+    }
+
+    fun toggleDeshVideshWar() {
+        val entities = entityManager ?: return
+        val active = entities.toggleInternationalWar()
+        soundEngine.playWarHorn()
+        _state.update {
+            it.copy(
+                warActive = active,
+                statusToast = if (active) {
+                    "⚔️ देश-विदेश युद्ध शुरू! सेनाएँ बॉर्डर पर लड़ रही हैं!"
+                } else {
+                    "🕊️ शांति समझौता! सभी देशों में दोस्ती व व्यापार शुरू।"
+                }
+            )
         }
     }
 
@@ -905,9 +1042,146 @@ class GameViewModel(
         return res
     }
 
+    fun generateStrongAdminPassword(): String {
+        return adminStore?.generateStrongAdminPassword() ?: ""
+    }
+
     fun adminLockSession() {
         adminStore?.lockAdminSession()
-        _state.update { it.copy(statusToast = "Admin Panel Locked") }
+        _state.update { it.copy(adminEngineMode = false, statusToast = "Admin Panel Locked") }
+    }
+
+    // --- FULL-SCREEN REAL-TIME 3D ADMIN GAME ENGINE STUDIO ---
+
+    fun enterAdminEngineMode() {
+        val current = _state.value
+        if (!current.adminSnapshot.isUnlockedInSession) {
+            _state.update { it.copy(statusToast = "पहले Admin Panel अनलॉक करें।") }
+            return
+        }
+        playerController?.let { c ->
+            if (c.activePlane == null && c.activeBike == null) {
+                c.flying = true
+            }
+        }
+        _state.update {
+            it.copy(
+                adminEngineMode = true,
+                flying = playerController?.flying ?: it.flying,
+                statusToast = "🛠️ Admin 3D Game Engine चालू! कहीं भी उड़ें और Store से कुछ भी रखें।"
+            )
+        }
+    }
+
+    fun exitAdminEngineMode() {
+        _state.update {
+            it.copy(
+                adminEngineMode = false,
+                statusToast = "Admin Engine से बाहर आए — मैप सेव हो रहा है..."
+            )
+        }
+        saveWorld()
+    }
+
+    fun selectEngineAsset(asset: AdminEngineAsset) {
+        _state.update { it.copy(selectedEngineAsset = asset) }
+    }
+
+    fun setEngineBrushRadius(radius: Int) {
+        _state.update { it.copy(engineBrushRadius = radius.coerceIn(1, 5)) }
+    }
+
+    fun placeSelectedEngineAssetAtCrosshair() {
+        val world = chunkWorld ?: return
+        val controller = playerController ?: return
+        val entities = entityManager
+        val current = _state.value
+        val asset = current.selectedEngineAsset
+        val hit = glRenderer?.currentHit
+        val tx: Int
+        val ty: Int
+        val tz: Int
+        if (hit != null) {
+            tx = hit.x
+            ty = hit.y
+            tz = hit.z
+        } else {
+            val (fx, fz) = frontTargetCoords(7.0f) ?: return
+            tx = fx
+            tz = fz
+            ty = floor(world.findSpawnY(tx, tz) - 1f).toInt().coerceIn(2, CHUNK_HEIGHT - 4)
+        }
+
+        val toastText: String
+        when (asset) {
+            AdminEngineAsset.SPAWN_VILLAGER_FAMILY -> {
+                if (entities != null) {
+                    entities.spawnEntityInFront(world, controller, EntityKind.VILLAGER, 4.5f)
+                    entities.spawnEntityInFront(world, controller, EntityKind.MAJDUR, 5.5f)
+                    entities.spawnEntityInFront(world, controller, EntityKind.RAJA, 6.5f)
+                }
+                soundEngine.playHumanGreetingChime()
+                toastText = "👨‍👩‍👧 नया परिवार व नागरिक 3D वर्ल्ड में बस गए!"
+            }
+            AdminEngineAsset.TRIGGER_WEDDING -> {
+                toastText = entities?.triggerWeddingCeremony(world, tx.toFloat(), tz.toFloat())
+                    ?: "💍 शादी मंडप तैयार!"
+                soundEngine.playWeddingShehnai()
+            }
+            AdminEngineAsset.SPAWN_BHARAT_SOLDIERS -> {
+                entities?.spawnNationSquad(world, controller, isVidesh = false)
+                soundEngine.playWarHorn()
+                toastText = "🛡️ देश रक्षक सेना के 3 योद्धा तैनात!"
+            }
+            AdminEngineAsset.SPAWN_VIDESH_WARRIORS -> {
+                entities?.spawnNationSquad(world, controller, isVidesh = true)
+                soundEngine.playWarHorn()
+                toastText = "⚔️ विदेश योद्धा दल के 3 सैनिक उतरे!"
+            }
+            AdminEngineAsset.TOGGLE_WORLD_WAR -> {
+                val active = entities?.toggleInternationalWar() ?: false
+                soundEngine.playWarHorn()
+                toastText = if (active) "⚔️ देश-विदेश युद्ध शुरू!" else "🕊️ देश-विदेश शांति बहाल!"
+            }
+            else -> {
+                world.applyAdminEngineAsset(tx, ty, tz, asset, current.engineBrushRadius)
+                when (asset) {
+                    AdminEngineAsset.DIG_SMALL_PIT, AdminEngineAsset.DIG_DEEP_CRATER,
+                    AdminEngineAsset.FLATTEN_GROUND, AdminEngineAsset.RAISE_HILL -> soundEngine.playDigEarth()
+                    AdminEngineAsset.GRASS_PATCH, AdminEngineAsset.GREEN_BUSH,
+                    AdminEngineAsset.OAK_TREE, AdminEngineAsset.CHERRY_TREE,
+                    AdminEngineAsset.DENSE_JUNGLE, AdminEngineAsset.FLOWER_GARDEN,
+                    AdminEngineAsset.SUNFLOWER_FIELD -> soundEngine.playGrassRustle()
+                    AdminEngineAsset.STONE_ROAD, AdminEngineAsset.CITY_BOULEVARD,
+                    AdminEngineAsset.AIRPORT_RUNWAY -> soundEngine.playStoneRoadStep()
+                    AdminEngineAsset.WATER_POND, AdminEngineAsset.WATERFALL_SPRING,
+                    AdminEngineAsset.RIVER_CHANNEL -> {
+                        soundEngine.playWaterSplash()
+                        entities?.spawnWaterSplashParticles(tx + 0.5f, ty + 1.2f, tz + 0.5f)
+                    }
+                    AdminEngineAsset.VOLCANO_LAVA -> {
+                        soundEngine.playLavaBubble()
+                        entities?.spawnLavaEmberParticles(tx + 0.5f, ty + 1.2f, tz + 0.5f)
+                    }
+                    AdminEngineAsset.SACRED_MANDIR -> soundEngine.playTempleBell()
+                    AdminEngineAsset.WEDDING_MANDAP -> soundEngine.playWeddingShehnai()
+                    else -> soundEngine.playAdminLiveChime()
+                }
+                toastText = "🛠️ ${asset.titleHindi} रखा गया @ ($tx, $tz)"
+            }
+        }
+
+        _state.update {
+            it.copy(
+                enginePlacedCount = it.enginePlacedCount + 1,
+                canUndo = world.canUndo(),
+                warActive = entities?.warModeEnabled ?: it.warActive,
+                weddingsCount = entities?.weddingsCount ?: it.weddingsCount,
+                syncStatus = CloudSyncStatus.UNSAVED,
+                statusToast = toastText
+            )
+        }
+        refreshTalkableNpcs()
     }
 
     fun adminImportObjUri(uri: Uri): Result<Pair<String, Int>> {
@@ -1054,19 +1328,22 @@ class GameViewModel(
         }
     }
 
-    fun adminPublishLiveMap(title: String, announcement: String) {
+    fun adminPublishLiveMap(title: String, announcement: String, description: String = "") {
         val store = adminStore ?: return
         val current = _state.value
         val published = store.publishLiveMap(
             title = title.ifBlank { current.worldName },
             biome = current.biome,
-            announcementBanner = announcement
+            announcementBanner = announcement,
+            publishedWorldId = current.worldId,
+            mapDescription = description,
+            placedAssetsCount = current.enginePlacedCount + current.blocksPlaced.toInt()
         )
         soundEngine.playAdminLiveChime()
         saveWorld()
         _state.update {
             it.copy(
-                statusToast = "LIVE PUBLISHED: '${published.title}' (Edit #${published.liveEditsCount})!"
+                statusToast = "🏆 #1 RANK LIVE PUBLISHED: '${published.title}' (Edit #${published.liveEditsCount})!"
             )
         }
     }
@@ -1591,7 +1868,16 @@ class GameViewModel(
             hit.x, hit.y, hit.z,
             target.topColor.red, target.topColor.green, target.topColor.blue
         )
-        soundEngine.playBlockBreak()
+        when (target) {
+            BlockType.GRASS, BlockType.LEAVES, BlockType.CHERRY_LEAVES, BlockType.TALL_GRASS,
+            BlockType.FLOWER_RED, BlockType.FLOWER_GOLD, BlockType.FLOWER_BLUE,
+            BlockType.FLOWER_PINK, BlockType.FLOWER_PURPLE, BlockType.FLOWER_SUNFLOWER -> soundEngine.playGrassRustle()
+            BlockType.DIRT, BlockType.SAND -> soundEngine.playDigEarth()
+            BlockType.WOOD_LOG, BlockType.PLANKS -> soundEngine.playWoodStep()
+            BlockType.STONE, BlockType.COBBLESTONE, BlockType.BRICK,
+            BlockType.SANDSTONE, BlockType.OBSIDIAN -> soundEngine.playStoneRoadStep()
+            else -> soundEngine.playBlockBreak()
+        }
         unsyncedMinedDelta += 1L
 
         val coinReward = when (target) {
@@ -1661,6 +1947,17 @@ class GameViewModel(
             blockToPlace == BlockType.LAVA -> {
                 soundEngine.playLavaBubble()
                 entityManager?.spawnLavaEmberParticles(px + 0.5f, py + 0.5f, pz + 0.5f)
+            }
+            blockToPlace == BlockType.GRASS || blockToPlace == BlockType.LEAVES ||
+                blockToPlace == BlockType.CHERRY_LEAVES || blockToPlace.crossPlant -> {
+                soundEngine.playGrassRustle()
+            }
+            blockToPlace == BlockType.WOOD_LOG || blockToPlace == BlockType.PLANKS -> {
+                soundEngine.playWoodStep()
+            }
+            blockToPlace == BlockType.STONE || blockToPlace == BlockType.COBBLESTONE ||
+                blockToPlace == BlockType.BRICK || blockToPlace == BlockType.SANDSTONE -> {
+                soundEngine.playStoneRoadStep()
             }
             else -> soundEngine.playBlockPlace()
         }

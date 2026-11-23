@@ -41,11 +41,13 @@ import androidx.compose.material.icons.rounded.Casino
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Terrain
+import com.example.data.LiveAdminMapConfig
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -92,6 +94,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.AdminStudioStore
@@ -224,10 +227,24 @@ fun WorldsHubScreen(
                             worldsState = worldsState,
                             profile = profile,
                             isCloudBacked = viewModel.isCloudBacked,
-                            liveAnnouncement = if (adminSnapshot.liveMap.published) adminSnapshot.liveMap.announcementBanner else "",
-                            liveMapTitle = if (adminSnapshot.liveMap.published) adminSnapshot.liveMap.title else "",
+                            liveMap = adminSnapshot.liveMap,
                             onOpenAdminStudio = { showHubAdminSheet = true },
                             onOpenWorld = onOpenWorld,
+                            onPlayPublishedMap = { published ->
+                                val existing = (worldsState as? UiState.Success)?.data
+                                    ?.firstOrNull { it.id == published.publishedWorldId }
+                                if (existing != null) {
+                                    onOpenWorld(existing.id)
+                                } else {
+                                    viewModel.createWorld(
+                                        name = published.title.ifBlank { "Admin #1 Live Map" },
+                                        biome = published.biome,
+                                        gameMode = GameMode.CREATIVE,
+                                        seed = Random.nextLong(10_000L, 999_999L),
+                                        onCreated = onOpenWorld
+                                    )
+                                }
+                            },
                             onCreateWorldClick = { showCreateDialog = true },
                             onQuickCreateStarter = { name, biome, mode ->
                                 viewModel.createWorld(
@@ -349,6 +366,7 @@ fun WorldsHubScreen(
             onClaimAdmin = adminStore::claimAdminCredentials,
             onLoginAdmin = adminStore::loginAdmin,
             onUpdatePassword = adminStore::updateAdminPassword,
+            onGeneratePassword = adminStore::generateStrongAdminPassword,
             onLockAdmin = adminStore::lockAdminSession,
             onImportObjUri = adminStore::importObjFileFromUri,
             onSaveCustomModel = { model, _ -> adminStore.saveCustomModel(model) },
@@ -374,10 +392,10 @@ private fun WorldsTabContent(
     worldsState: UiState<List<VoxelWorldDoc>>,
     profile: BuilderProfile?,
     isCloudBacked: Boolean,
-    liveAnnouncement: String,
-    liveMapTitle: String,
+    liveMap: LiveAdminMapConfig,
     onOpenAdminStudio: () -> Unit,
     onOpenWorld: (String) -> Unit,
+    onPlayPublishedMap: (LiveAdminMapConfig) -> Unit,
     onCreateWorldClick: () -> Unit,
     onQuickCreateStarter: (String, BiomeType, GameMode) -> Unit,
     onRenameRequest: (VoxelWorldDoc) -> Unit,
@@ -396,38 +414,143 @@ private fun WorldsTabContent(
             )
         }
 
-        if (liveMapTitle.isNotBlank() || liveAnnouncement.isNotBlank()) {
+        // #1 RANK FEATURED OFFICIAL ADMIN PUBLISHED MAP — ALWAYS PINNED AT TOP #1!
+        if (liveMap.published) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color(0xFF281E0B),
-                    border = BorderStroke(1.dp, Color(0xFFFFD54F)),
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color(0xFF1E1708),
+                    border = BorderStroke(2.dp, Color(0xFFFFD54F)),
+                    shadowElevation = 6.dp,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 6.dp)
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                        .testTag("rank1_published_map_card")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Campaign,
-                            contentDescription = "Admin Live Map",
-                            tint = Color(0xFFFFD54F)
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "ADMIN LIVE: ${liveMapTitle.ifBlank { "Royal World" }}",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFFFE57F)
-                            )
-                            if (liveAnnouncement.isNotBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFFFFC107)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.EmojiEvents,
+                                        contentDescription = "Rank 1 Official Admin Map",
+                                        tint = Color(0xFF1A1100),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "#1 RANK • OFFICIAL ADMIN MAP",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF1A1100)
+                                    )
+                                }
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0x3353FF9E)
+                            ) {
                                 Text(
-                                    text = liveAnnouncement,
+                                    text = "● LIVE #${liveMap.liveEditsCount}",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF53FF9E),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            MiniVoxelBlockIcon(block = biomePreviewBlock(liveMap.biome), size = 40.dp)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = liveMap.title.ifBlank { "Admin Live Royal World" },
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFFFFE57F),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = liveMap.mapDescription.ifBlank {
+                                        "एडमिन गेम इंजन में बनाया गया #1 ऑफिशियल लाइव मैप"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFFFF8E1)
+                                    color = Color(0xFFFFF3D1),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        if (liveMap.announcementBanner.isNotBlank()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Campaign,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFFD54F),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = liveMap.announcementBanner,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color(0xFFFFE082),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Creator: ${liveMap.creatorLabel.ifBlank { "Admin" }} • ${liveMap.biome.displayName} • ${liveMap.placedAssetsCount} Assets",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFD7C79E),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Button(
+                                onClick = { onPlayPublishedMap(liveMap) },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFFFC107),
+                                    contentColor = Color(0xFF1A1200)
+                                ),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.testTag("play_rank1_published_map_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PlayArrow,
+                                    contentDescription = "Play Rank 1 Official Map",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "PLAY #1 MAP",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 12.sp
                                 )
                             }
                         }
