@@ -45,6 +45,10 @@ object VoxelTextureAtlas {
     private const val TILE_FLOWER_GOLD = 26
     private const val TILE_FLOWER_BLUE = 27
     private const val TILE_WATERFALL = 28
+    private const val TILE_FLOWER_PINK = 29
+    private const val TILE_FLOWER_PURPLE = 30
+    private const val TILE_FLOWER_SUNFLOWER = 31
+    private const val TILE_CHERRY_LEAVES = 32
 
     data class TileUV(val u0: Float, val v0: Float, val u1: Float, val v1: Float)
 
@@ -82,6 +86,10 @@ object VoxelTextureAtlas {
             BlockType.FLOWER_GOLD -> TILE_FLOWER_GOLD
             BlockType.FLOWER_BLUE -> TILE_FLOWER_BLUE
             BlockType.WATERFALL -> TILE_WATERFALL
+            BlockType.FLOWER_PINK -> TILE_FLOWER_PINK
+            BlockType.FLOWER_PURPLE -> TILE_FLOWER_PURPLE
+            BlockType.FLOWER_SUNFLOWER -> TILE_FLOWER_SUNFLOWER
+            BlockType.CHERRY_LEAVES -> TILE_CHERRY_LEAVES
             BlockType.AIR -> TILE_DIRT
         }
         val col = tileIndex % GRID_TILES
@@ -129,6 +137,10 @@ object VoxelTextureAtlas {
         drawFlowerTile(bmp, TILE_FLOWER_GOLD, 0xFFFFB703.toInt(), 0xFFFFEA70.toInt(), 0xFFE67E00.toInt())
         drawFlowerTile(bmp, TILE_FLOWER_BLUE, 0xFF2CC8FF.toInt(), 0xFFB3F0FF.toInt(), 0xFF1280C4.toInt())
         drawWaterfallTile(bmp, TILE_WATERFALL)
+        drawFlowerTile(bmp, TILE_FLOWER_PINK, 0xFFFF5CA8.toInt(), 0xFFFFB8DA.toInt(), 0xFFD42479.toInt())
+        drawFlowerTile(bmp, TILE_FLOWER_PURPLE, 0xFFB36BFF.toInt(), 0xFFE3C2FF.toInt(), 0xFF7B2ED6.toInt())
+        drawSunflowerTile(bmp, TILE_FLOWER_SUNFLOWER)
+        drawCherryLeavesTile(bmp, TILE_CHERRY_LEAVES)
 
         return bmp
     }
@@ -439,6 +451,52 @@ object VoxelTextureAtlas {
                     foamStreak -> 0xDDE6FAFF.toInt()
                     x % 2 == 0 -> 0xCC3CB8F6.toInt()
                     else -> 0xCC2193DF.toInt()
+                }
+                setTilePixel(bmp, tile, x, y, col)
+            }
+        }
+    }
+
+    private fun drawSunflowerTile(bmp: Bitmap, tile: Int) {
+        // Tall sturdy stem + side leaves
+        for (y in 6 until 16) {
+            setTilePixel(bmp, tile, 7, y, 0xFF2E8C2E.toInt())
+            setTilePixel(bmp, tile, 8, y, 0xFF42B33C.toInt())
+        }
+        setTilePixel(bmp, tile, 5, 11, 0xFF42B33C.toInt())
+        setTilePixel(bmp, tile, 6, 10, 0xFF5CE055.toInt())
+        setTilePixel(bmp, tile, 9, 12, 0xFF42B33C.toInt())
+        setTilePixel(bmp, tile, 10, 11, 0xFF5CE055.toInt())
+
+        // Wide golden sunflower bloom with warm dark brown seed center
+        for (y in 1..8) {
+            for (x in 4..11) {
+                val dx = abs(x - 7.5f)
+                val dy = abs(y - 4.5f)
+                val dist = dx + dy
+                if (dist <= 4.3f) {
+                    val col = when {
+                        dx <= 1.2f && dy <= 1.2f -> if ((x + y) % 2 == 0) 0xFF593315.toInt() else 0xFF7A4820.toInt()
+                        y <= 3 -> 0xFFFFF176.toInt()
+                        y >= 7 -> 0xFFFFA000.toInt()
+                        else -> 0xFFFFD600.toInt()
+                    }
+                    setTilePixel(bmp, tile, x, y, col)
+                }
+            }
+        }
+    }
+
+    private fun drawCherryLeavesTile(bmp: Bitmap, tile: Int) {
+        val rng = Random(676)
+        for (y in 0 until 16) {
+            for (x in 0 until 16) {
+                val r = rng.nextInt(10)
+                val col = when {
+                    r < 2 -> 0xFFD96499.toInt()
+                    r < 5 -> 0xFFF48FB1.toInt()
+                    r < 8 -> 0xFFFFB2CE.toInt()
+                    else -> 0xFFFFE0EC.toInt()
                 }
                 setTilePixel(bmp, tile, x, y, col)
             }

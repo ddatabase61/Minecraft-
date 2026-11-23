@@ -158,10 +158,12 @@ class VoxelWorldEngine(
                 val distCenter = abs(x - WORLD_SIZE / 2.0) + abs(z - WORLD_SIZE / 2.0)
 
                 val surfaceY = when (biome) {
-                    BiomeType.EMERALD_VALLEY -> (4.6 + wave * 1.65).toInt().coerceIn(3, 7)
+                    BiomeType.EMERALD_VALLEY, BiomeType.FLOWER_PARADISE -> (4.6 + wave * 1.65).toInt().coerceIn(3, 7)
                     BiomeType.DESERT_DUNES -> (4.2 + wave * 1.45).toInt().coerceIn(3, 7)
-                    BiomeType.FROST_PEAKS -> (5.2 + wave * 2.1 + (if (distCenter < 6) 1 else 0)).toInt().coerceIn(3, 8)
+                    BiomeType.FROST_PEAKS, BiomeType.SKY_KINGDOM -> (5.2 + wave * 2.1 + (if (distCenter < 6) 1 else 0)).toInt().coerceIn(3, 8)
                     BiomeType.VOLCANIC_BADLANDS -> (4.4 + wave * 1.8).toInt().coerceIn(3, 7)
+                    BiomeType.JUNGLE_RIVER -> (4.8 + wave * 1.8).toInt().coerceIn(3, 7)
+                    BiomeType.OCEAN_ISLANDS -> (3.8 + wave * 1.6).toInt().coerceIn(3, 6)
                 }
 
                 // River / Oasis / Magma channel
@@ -182,10 +184,9 @@ class VoxelWorldEngine(
                 // Fill channel with water / ice / lava at y = 4
                 if (inChannel) {
                     val fluid = when (biome) {
-                        BiomeType.EMERALD_VALLEY -> BlockType.WATER
-                        BiomeType.DESERT_DUNES -> BlockType.WATER
                         BiomeType.FROST_PEAKS -> BlockType.ICE
                         BiomeType.VOLCANIC_BADLANDS -> BlockType.LAVA
+                        else -> BlockType.WATER
                     }
                     setBase(x, 4, z, fluid)
                 }
@@ -194,12 +195,11 @@ class VoxelWorldEngine(
 
         // Add biome signature structures and trees
         when (biome) {
-            BiomeType.EMERALD_VALLEY -> {
+            BiomeType.EMERALD_VALLEY, BiomeType.FLOWER_PARADISE, BiomeType.JUNGLE_RIVER, BiomeType.OCEAN_ISLANDS, BiomeType.SKY_KINGDOM -> {
                 placeOakTree(3, 3)
                 placeOakTree(14, 4)
                 placeOakTree(4, 14)
                 placeOakTree(13, 13)
-                // Cozy starter stone & timber outpost platform with glowing torches
                 buildStarterCamp(8, 8, BlockType.COBBLESTONE, BlockType.PLANKS)
             }
 
@@ -232,18 +232,18 @@ class VoxelWorldEngine(
             }
         }
         return when (biome) {
-            BiomeType.EMERALD_VALLEY -> BlockType.GRASS
             BiomeType.DESERT_DUNES -> if (y >= 6) BlockType.SANDSTONE else BlockType.SAND
             BiomeType.FROST_PEAKS -> BlockType.SNOW
             BiomeType.VOLCANIC_BADLANDS -> if (y >= 6) BlockType.OBSIDIAN else BlockType.STONE
+            BiomeType.OCEAN_ISLANDS -> if (y <= 4) BlockType.SAND else BlockType.GRASS
+            else -> BlockType.GRASS
         }
     }
 
     private fun subSurfaceBlockFor(biome: BiomeType): BlockType = when (biome) {
-        BiomeType.EMERALD_VALLEY -> BlockType.DIRT
         BiomeType.DESERT_DUNES -> BlockType.SANDSTONE
-        BiomeType.FROST_PEAKS -> BlockType.DIRT
         BiomeType.VOLCANIC_BADLANDS -> BlockType.COBBLESTONE
+        else -> BlockType.DIRT
     }
 
     private fun generateUndergroundBlock(y: Int, rng: Random): BlockType {

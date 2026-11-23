@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,8 +29,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Groups
@@ -225,18 +228,29 @@ fun FirstPersonBlasterOverlay(
         val shiftX = kick * 10.dp.toPx()
         val shiftY = kick * 12.dp.toPx()
 
-        // Muzzle flash burst when firing
-        if (kick > 0.35f) {
-            val flashCenter = Offset(w * 0.24f + shiftX, h * 0.22f + shiftY)
+        // High-pro fiery muzzle flash starburst + shockwave ring when firing
+        if (kick > 0.25f) {
+            val flashCenter = Offset(w * 0.22f + shiftX, h * 0.20f + shiftY)
             drawCircle(
-                color = Color(0xFFFFEA70).copy(alpha = (kick * 0.85f).coerceIn(0f, 1f)),
+                color = Color(0xFFFF6D00).copy(alpha = (kick * 0.65f).coerceIn(0f, 1f)),
+                radius = (34.dp.toPx() * kick),
+                center = flashCenter
+            )
+            drawCircle(
+                color = Color(0xFFFFEA70).copy(alpha = (kick * 0.90f).coerceIn(0f, 1f)),
                 radius = (24.dp.toPx() * kick),
                 center = flashCenter
             )
             drawCircle(
-                color = Color(0xFF35E8FF).copy(alpha = (kick * 0.9f).coerceIn(0f, 1f)),
-                radius = (13.dp.toPx() * kick),
+                color = Color(0xFFFFFFFF).copy(alpha = (kick * 0.95f).coerceIn(0f, 1f)),
+                radius = (11.dp.toPx() * kick),
                 center = flashCenter
+            )
+            drawCircle(
+                color = Color(0xFF35E8FF).copy(alpha = (kick * 0.85f).coerceIn(0f, 1f)),
+                radius = (28.dp.toPx() * (1.25f - kick * 0.4f)),
+                center = flashCenter,
+                style = Stroke(width = 2.6.dp.toPx())
             )
         }
 
@@ -318,19 +332,27 @@ fun FirstPersonHandAndBlockOverlay(
         val rotDeg = -14f - swingArc * 36f
 
         rotate(degrees = rotDeg, pivot = Offset(w * 0.80f, h * 0.90f)) {
-            // Character forearm & teal sleeve (bottom-right)
+            // Character forearm & chocolate-brown polo sleeve with grey cuff (matched to user photo)
             val armX = w * 0.50f + swingDx
             val armY = h * 0.46f + bobY + swingDy
             drawRoundRect(
-                color = Color(0xFF1D8C96),
+                color = Color(0xFF613D35),
                 topLeft = Offset(armX + 6.dp.toPx(), armY + 14.dp.toPx()),
                 size = Size(w * 0.34f, h * 0.46f),
                 cornerRadius = CornerRadius(6.dp.toPx())
             )
+            // Cool grey polo sleeve cuff
             drawRoundRect(
-                color = Color(0xFFD9A679),
+                color = Color(0xFF9EA3AD),
+                topLeft = Offset(armX + 4.dp.toPx(), armY + 12.dp.toPx()),
+                size = Size(w * 0.33f, 6.dp.toPx()),
+                cornerRadius = CornerRadius(3.dp.toPx())
+            )
+            // Warm medium-brown skin forearm
+            drawRoundRect(
+                color = Color(0xFFB88463),
                 topLeft = Offset(armX, armY),
-                size = Size(w * 0.30f, h * 0.30f),
+                size = Size(w * 0.30f, h * 0.28f),
                 cornerRadius = CornerRadius(5.dp.toPx())
             )
 
@@ -629,9 +651,12 @@ fun McpeSurvivalStatusBars(
 fun FullWorldMapSheet(
     uiState: GameWorldUiState,
     onTeleport: (WorldLandmark) -> Unit,
+    onOpenRealEstate: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val realEstateLandmarks = remember { WorldLandmark.entries.filter { it.isRealEstate } }
+    val natureLandmarks = remember { WorldLandmark.entries.filter { !it.isRealEstate } }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -642,28 +667,47 @@ fun FullWorldMapSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(bottom = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(Icons.Rounded.Map, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Column {
-                    Text("World Map & Radar", style = MaterialTheme.typography.headlineMedium)
-                    Text(
-                        text = "Position X:${uiState.playerX} Y:${uiState.playerY} Z:${uiState.playerZ} • ${uiState.totalEntities} Living Entities",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Rounded.Map, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Column {
+                        Text("Mega World & Real Estate Map", style = MaterialTheme.typography.headlineMedium)
+                        Text(
+                            text = "Pos X:${uiState.playerX} Y:${uiState.playerY} Z:${uiState.playerZ} • 93×93 Live Radar • ${uiState.totalEntities} Entities",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Button(
+                    onClick = {
+                        onDismiss()
+                        onOpenRealEstate()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag("map_open_real_estate_button")
+                ) {
+                    Text("Real Estate")
                 }
             }
 
             Surface(
                 shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(220.dp)
@@ -681,16 +725,47 @@ fun FullWorldMapSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                LegendDot(Color(0xFF1D88D6), "Ocean/Water")
+                LegendDot(Color(0xFF1D88D6), "Water/Pool")
+                LegendDot(Color(0xFFD8B872), "Real Estate")
                 LegendDot(Color(0xFFFFD166), "Heroes")
                 LegendDot(Color(0xFF53FF9E), "Animals")
-                LegendDot(Color(0xFFFF3B5C), "AI Zombies")
+                LegendDot(Color(0xFFFF3B5C), "Zombies")
             }
 
-            Text("Quick Explore World Landmarks", style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = "Real Estate City District (रियल एस्टेट टाउनशिप)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFFFCA28)
+            )
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(WorldLandmark.entries) { landmark ->
+                items(realEstateLandmarks) { landmark ->
+                    Button(
+                        onClick = {
+                            onTeleport(landmark)
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF28200D),
+                            contentColor = Color(0xFFFFE57F)
+                        ),
+                        border = BorderStroke(1.dp, Color(0xFFFFCA28)),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.testTag("landmark_${landmark.name.lowercase()}")
+                    ) {
+                        Icon(Icons.Rounded.Explore, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(landmark.label)
+                    }
+                }
+            }
+
+            Text("World Nature & Heritage Landmarks", style = MaterialTheme.typography.titleSmall)
+
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(natureLandmarks) { landmark ->
                     Button(
                         onClick = {
                             onTeleport(landmark)
@@ -800,7 +875,8 @@ fun CharacterSpawnerSheet(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(260.dp)
+                    .weight(1f, fill = false)
+                    .heightIn(max = 250.dp)
             ) {
                 items(itemsInCategory, key = { it.name }) { kind ->
                     val badgeColor = Color(kind.badgeColorHex)
@@ -831,6 +907,7 @@ fun CharacterSpawnerSheet(
                                     Icon(
                                         imageVector = when (kind.category) {
                                             EntityCategory.HEROES -> Icons.Rounded.Groups
+                                            EntityCategory.SOCIETY -> Icons.Rounded.Groups
                                             EntityCategory.ANIMALS -> Icons.Rounded.Pets
                                             EntityCategory.ZOMBIES -> Icons.Rounded.Warning
                                         },
@@ -850,6 +927,7 @@ fun CharacterSpawnerSheet(
                                 text = when {
                                     kind.isHostile -> "AI Tracker"
                                     kind.isFlying -> "Flying Bird"
+                                    kind.category == EntityCategory.SOCIETY -> "Autonomous AI"
                                     kind.isCompanion -> "AI Companion"
                                     else -> "Roaming AI"
                                 },

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Scoped strictly to the app's private APK update cache folder -->
+    <cache-path
+        name="apk_updates"
+        path="updates/" />
+    <!-- Optional fallback inside app-specific external downloads folder -->
+    <external-files-path
+        name="external_apk_updates"
+        path="Download/updates/" />
+</paths>

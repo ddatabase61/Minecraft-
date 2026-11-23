@@ -61,7 +61,9 @@ import com.example.data.GuestLocalDataSource
 import com.example.data.WorldDataSource
 import com.example.data.firebase.WorldRepository
 import com.example.data.firebase.authStateFlow
+import com.example.data.firebase.configureAppCheck
 import com.example.data.firebase.isFirebaseConfigured
+import com.example.data.firebase.resolveFirestoreDatabaseId
 import com.example.data.firebase.signOutUser
 import com.example.data.model.BlockType
 import com.example.engine.MiniVoxelBlockIcon
@@ -71,6 +73,7 @@ import com.example.ui.screens.WorldsHubScreen
 import com.example.ui.theme.BlockForgeTheme
 import com.example.ui.viewmodel.GameViewModel
 import com.example.ui.viewmodel.HubViewModel
+import com.example.update.AppUpdateHost
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -83,6 +86,7 @@ const val ROUTE_WORLD = "world/{worldId}"
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureAppCheck(this, intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -146,6 +150,9 @@ fun BlockForgeApp() {
                 onFinished = { showOpeningAnimation = false }
             )
         }
+
+        // Firebase Firestore Automatic APK Update Checker & Dialog
+        AppUpdateHost()
     }
 }
 
@@ -254,10 +261,10 @@ private fun SessionNavHost(
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                val dataSource: WorldDataSource = if (isGuestSession) {
-                    GuestLocalDataSource(app)
+                val databaseId = if (isGuestSession) null else resolveFirestoreDatabaseId(app)
+                val dataSource: WorldDataSource = if (isGuestSession || databaseId == null) {
+                    GuestLocalDataSource.getInstance(app)
                 } else {
-                    val databaseId = app.getString(R.string.firestore_database_id)
                     WorldRepository(FirebaseFirestore.getInstance(databaseId))
                 }
                 HubViewModel(
@@ -305,15 +312,16 @@ private fun SessionNavHost(
                         val app = checkNotNull(this[APPLICATION_KEY]) {
                             "APPLICATION_KEY missing from CreationExtras"
                         }
-                        val dataSource: WorldDataSource = if (isGuestSession) {
-                            GuestLocalDataSource(app)
+                        val databaseId = if (isGuestSession) null else resolveFirestoreDatabaseId(app)
+                        val dataSource: WorldDataSource = if (isGuestSession || databaseId == null) {
+                            GuestLocalDataSource.getInstance(app)
                         } else {
-                            val databaseId = app.getString(R.string.firestore_database_id)
                             WorldRepository(FirebaseFirestore.getInstance(databaseId))
                         }
                         GameViewModel(
                             repository = dataSource,
-                            worldId = worldId
+                            worldId = worldId,
+                            appContext = app.applicationContext
                         )
                     }
                 }

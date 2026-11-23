@@ -4,6 +4,7 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import android.opengl.Matrix
+import com.example.data.model.BikeType
 import com.example.data.model.BlockType
 import com.example.engine.audio.VoxelSoundEngine
 import java.nio.ByteBuffer
@@ -19,13 +20,19 @@ import kotlin.math.sin
 data class HudTelemetry(
     val fps: Int = 60,
     val x: Int = 8,
-    val y: Int = 12,
+    val y: Int = 18,
     val z: Int = 8,
     val yaw: Float = 0f,
     val targetBlock: BlockType? = null,
     val flying: Boolean = false,
     val inWater: Boolean = false,
     val isUnderwater: Boolean = false,
+    val inLava: Boolean = false,
+    val sittingOnWater: Boolean = false,
+    val waterAvailableForSit: Boolean = false,
+    val activeBike: BikeType? = null,
+    val bikeSpeedKmh: Int = 0,
+    val bikeNitroActive: Boolean = false,
     val oxygen: Int = 10,
     val sprinting: Boolean = false,
     val sneaking: Boolean = false,
@@ -36,16 +43,32 @@ data class HudTelemetry(
     val totalEntities: Int = 0,
     val connectedAnimals: Int = 0,
     val minimapBlips: List<MinimapBlip> = emptyList(),
-    val minimapColors: IntArray = IntArray(0)
+    val minimapColors: IntArray = IntArray(0),
+    val worldEventToast: String? = null,
+    val damageTick: Int = 0,
+    val nearbyEntity: TalkableNpcSnapshot? = null,
+    val nearbyEntities: List<TalkableNpcSnapshot> = emptyList()
 )
+
+enum class CameraMode(val shortLabel: String, val displayName: String) {
+    FIRST_PERSON("1P", "1st-Person Eye View"),
+    THIRD_PERSON_BACK("3P", "3rd-Person Over-Shoulder"),
+    THIRD_PERSON_FRONT("FRONT", "Front Selfie Camera");
+
+    fun next(): CameraMode = when (this) {
+        FIRST_PERSON -> THIRD_PERSON_BACK
+        THIRD_PERSON_BACK -> THIRD_PERSON_FRONT
+        THIRD_PERSON_FRONT -> FIRST_PERSON
+    }
+}
 
 /**
  * OpenGL ES 2.0 3D Voxel Renderer featuring:
- * - Animated Water & Waterfall Shaders (surface waves, flowing foam, underwater caustic tint)
- * - 1st-Person & 3rd-Person Camera Perspective (with animated 3D Player Avatar)
- * - Dynamic Rain Weather streaks
- * - Articulated Animals, Flying Birds, Heroes, AI-Tracking Zombies, Gun Projectiles & Debris Particles
- * - Dynamic Day/Night Sky, Sun Halo, Moon, Fog & Exact DDA Target Wireframe
+ * - Pro 3-Mode Spring-Arm Camera (1st-Person, Smooth Over-Shoulder 3rd-Person, Front Selfie)
+ * - Upgraded Animated Water & Waterfall Shaders + Glowing Molten Lava Shader
+ * - Real-time Water & Lava channel flow physics + Real Estate City Rendering
+ * - Autonomous Living Society, Heroes, Animals, Birds & Zombies
+ * - Dynamic Day/Night Sky, Sun Halo, Moon, Rain Weather & Exact DDA Target Wireframe
  */
 class VoxelGLRenderer(
     private val world: VoxelChunkWorld,
@@ -57,10 +80,12 @@ class VoxelGLRenderer(
 
     @Volatile var paused: Boolean = false
     @Volatile var creativeMode: Boolean = false
-    @Volatile var renderDistance: Int = 2
+    @Volatile var renderDistance: Int = 4
     @Volatile var autoTimeCycle: Boolean = true
     @Volatile var timeOfDay: Float = 0.22f
-    @Volatile var thirdPersonCamera: Boolean = false
+    @Volatile var cameraMode: CameraMode = CameraMode.FIRST_PERSON
+    val thirdPersonCamera: Boolean
+        get() = cameraMode != CameraMode.FIRST_PERSON
     @Volatile var rainEnabled: Boolean = false
     @Volatile var armSwingProgress: Float = 0f
     @Volatile var currentHit: VoxelRaycastHit? = null
@@ -68,6 +93,7 @@ class VoxelGLRenderer(
 
     private var voxelProgram = 0
     private var waterProgram = 0
+    private var lavaProgram = 0
     private var entityProgram = 0
     private var lineProgram = 0
     private var atlasTextureId = 0
@@ -82,6 +108,12 @@ class VoxelGLRenderer(
     private var wMvp = 0; private var wCamPos = 0; private var wDaylight = 0
     private var wFogColor = 0; private var wFogStart = 0; private var wFogEnd = 0
     private var wTexture = 0; private var wTime = 0
+
+    // Animated Glowing Lava shader handles
+    private var vPos = 0; private var vTex = 0; private var vShade = 0
+    private var vMvp = 0; private var vCamPos = 0
+    private var vFogColor = 0; private var vFogStart = 0; private var vFogEnd = 0
+    private var vTexture = 0; private var vTime = 0
 
     // Colored 3D Entity/Particle shader handles
     private var ePos = 0; private var eColor = 0; private var eShade = 0
@@ -115,9 +147,11 @@ class VoxelGLRenderer(
         }
 
     private var viewportAspect = 1.777f
-    private var currentFov = 70f
+    private var currentFov = 72f
+    private var smoothCamDist = 4.2f
     private var elapsedTime = 0f
     private var bubbleTimer = 0f
+    private var fluidStepTimer = 0f
     private var lastFrameNs = 0L
     private var fpsCounter = 0
     private var fpsTimerMs = 0L
@@ -125,6 +159,14 @@ class VoxelGLRenderer(
     private var lastTelemetryMs = 0L
     private var lastMinimapMs = 0L
     private var cachedMinimapColors = IntArray(0)
+    private var pendingWorldToast: String? = null
+    private var damageShakeTimer = 0f
+    private var damageCounter = 0
+    private var lastPrewarmCx = Int.MIN_VALUE
+    private var lastPrewarmCz = Int.MIN_VALUE
+    private val prewarmExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "BlockForge-ChunkPrewarm").apply { isDaemon = true }
+    }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
@@ -158,6 +200,18 @@ class VoxelGLRenderer(
         wTexture = GLES20.glGetUniformLocation(waterProgram, "uTexture")
         wTime = GLES20.glGetUniformLocation(waterProgram, "uTime")
 
+        lavaProgram = createProgram(LAVA_VERTEX_SHADER, LAVA_FRAGMENT_SHADER)
+        vPos = GLES20.glGetAttribLocation(lavaProgram, "aPosition")
+        vTex = GLES20.glGetAttribLocation(lavaProgram, "aTexCoord")
+        vShade = GLES20.glGetAttribLocation(lavaProgram, "aShade")
+        vMvp = GLES20.glGetUniformLocation(lavaProgram, "uMVPMatrix")
+        vCamPos = GLES20.glGetUniformLocation(lavaProgram, "uCameraPos")
+        vFogColor = GLES20.glGetUniformLocation(lavaProgram, "uFogColor")
+        vFogStart = GLES20.glGetUniformLocation(lavaProgram, "uFogStart")
+        vFogEnd = GLES20.glGetUniformLocation(lavaProgram, "uFogEnd")
+        vTexture = GLES20.glGetUniformLocation(lavaProgram, "uTexture")
+        vTime = GLES20.glGetUniformLocation(lavaProgram, "uTime")
+
         entityProgram = createProgram(ENTITY_VERTEX_SHADER, ENTITY_FRAGMENT_SHADER)
         ePos = GLES20.glGetAttribLocation(entityProgram, "aPosition")
         eColor = GLES20.glGetAttribLocation(entityProgram, "aColor")
@@ -182,7 +236,7 @@ class VoxelGLRenderer(
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
         viewportAspect = width.toFloat() / height.coerceAtLeast(1).toFloat()
-        Matrix.perspectiveM(projMatrix, 0, currentFov, viewportAspect, 0.1f, 165f)
+        Matrix.perspectiveM(projMatrix, 0, currentFov, viewportAspect, 0.12f, 260f)
     }
 
     fun triggerArmSwing() {
@@ -201,17 +255,62 @@ class VoxelGLRenderer(
             if (armSwingProgress > 0f) {
                 armSwingProgress = (armSwingProgress - dt * 4.5f).coerceAtLeast(0f)
             }
+            if (damageShakeTimer > 0f) {
+                damageShakeTimer = (damageShakeTimer - dt).coerceAtLeast(0f)
+            }
             if (autoTimeCycle) {
                 timeOfDay = (timeOfDay + dt * 0.0038f) % 1.0f
             }
+
+            // Real-time Water & Lava Channel Physics (~5.5 Hz tick for smooth animated fluid spreading!)
+            fluidStepTimer += dt
+            if (fluidStepTimer >= 0.18f) {
+                fluidStepTimer = 0f
+                val fluidEvents = world.stepFluidPhysics()
+                if (fluidEvents.obsidianFormed > 0) {
+                    soundEngine.playLavaSizzle()
+                    fluidEvents.sizzlePos?.let { (sx, sy, sz) ->
+                        entityManager.spawnSteamBurst(sx, sy, sz)
+                    }
+                } else if (fluidEvents.waterFlowed > 2) {
+                    soundEngine.playWaterRushPulse()
+                } else if (fluidEvents.lavaFlowed > 1) {
+                    soundEngine.playLavaBubble()
+                }
+            }
+
             val stepEvents = player.stepPhysics(world, dt, creativeMode)
             if (stepEvents.enteredWater) {
                 soundEngine.playWaterSplash()
                 entityManager.spawnWaterSplashParticles(player.x, player.y, player.z)
+            } else if (stepEvents.enteredLava) {
+                soundEngine.playLavaSizzle()
+                entityManager.spawnLavaEmberParticles(player.x, player.y, player.z)
             } else if (stepEvents.footstep) {
                 soundEngine.playFootstep(stepEvents.inWater)
                 if (stepEvents.inWater) {
                     entityManager.spawnWaterSplashParticles(player.x, player.y + 0.1f, player.z)
+                }
+            }
+            if (stepEvents.waterSitRipple) {
+                soundEngine.playWaterSitRipple()
+                entityManager.spawnWaterSitRipples(player.x, player.y + 0.14f, player.z)
+            }
+            val activeBikeNow = stepEvents.ridingBike
+            if (activeBikeNow != null) {
+                if (stepEvents.bikeEnginePulse) {
+                    soundEngine.playBikeEnginePulse(
+                        style = activeBikeNow.soundStyle,
+                        speedRatio = stepEvents.bikeSpeedRatio,
+                        nitro = stepEvents.bikeNitroActive
+                    )
+                    entityManager.spawnBikeExhaustParticles(
+                        x = player.x - sin(player.yaw) * 0.95f,
+                        y = player.y + 0.35f,
+                        z = player.z + cos(player.yaw) * 0.95f,
+                        nitro = stepEvents.bikeNitroActive,
+                        isElectric = activeBikeNow.hasNeonWheels
+                    )
                 }
             }
             if (stepEvents.isUnderwater) {
@@ -229,7 +328,18 @@ class VoxelGLRenderer(
                 soundEngine.playZombieHit(defeated = false)
             }
             if (events.playerDamaged) {
-                soundEngine.playZombieGroan()
+                soundEngine.playPlayerHurt()
+                damageShakeTimer = 0.28f
+                damageCounter++
+            }
+            if (events.pujaBellTriggered) {
+                soundEngine.playTempleBell()
+            }
+            if (events.humanWorkSoundTriggered) {
+                soundEngine.playHumanWorkHammer()
+            }
+            if (events.aiActivityToast != null) {
+                pendingWorldToast = events.aiActivityToast
             }
         }
 
@@ -242,7 +352,6 @@ class VoxelGLRenderer(
         val baseEyeY = player.eyeY
         val baseEyeZ = player.z
 
-        // 1st-Person or 3rd-Person Chase Camera
         var camX = baseEyeX
         var camY = baseEyeY
         var camZ = baseEyeZ
@@ -250,49 +359,120 @@ class VoxelGLRenderer(
         var lookY = baseEyeY + fy
         var lookZ = baseEyeZ + fz
 
-        if (thirdPersonCamera) {
-            val backDist = 4.0f
-            var safeDist = 0.5f
-            for (step in 1..8) {
-                val d = (step / 8f) * backDist
-                val tx = baseEyeX - fx * d
-                val ty = baseEyeY + 0.7f - fy * d * 0.6f
-                val tz = baseEyeZ - fz * d
-                if (world.isSolid(floor(tx).toInt(), floor(ty).toInt(), floor(tz).toInt())) break
-                safeDist = d
-            }
-            camX = baseEyeX - fx * safeDist
-            camY = baseEyeY + 0.7f - fy * safeDist * 0.6f
-            camZ = baseEyeZ - fz * safeDist
-            lookX = baseEyeX + fx * 2.5f
-            lookY = baseEyeY + fy * 1.5f
-            lookZ = baseEyeZ + fz * 2.5f
+        if (damageShakeTimer > 0f) {
+            val shakeAmt = (damageShakeTimer / 0.28f) * 0.16f
+            val sx = sin(elapsedTime * 68f) * shakeAmt
+            val sy = cos(elapsedTime * 54f) * shakeAmt * 0.7f
+            camX += sx
+            camY += sy
+            lookX += sx * 0.5f
+            lookY += sy * 0.5f
         }
 
-        // Smooth Bedrock-style camera FOV widening while sprinting
-        val targetFov = if (player.isEffectivelySprinting && player.moveSpeedFraction > 0.25f) 79f else 70f
+        val mode = cameraMode
+        if (mode != CameraMode.FIRST_PERSON) {
+            val rightX = cos(player.yaw)
+            val rightZ = sin(player.yaw)
+            val isFront = mode == CameraMode.THIRD_PERSON_FRONT
+            val onBike = player.activeBike != null
+            val desiredDist = when {
+                isFront -> 3.9f
+                onBike -> 5.45f
+                player.sittingOnWater -> 4.6f
+                else -> 4.35f
+            }
+            val pivotX = baseEyeX + if (isFront || onBike) 0f else rightX * 0.42f
+            val pivotY = baseEyeY + if (onBike) 0.42f else 0.14f
+            val pivotZ = baseEyeZ + if (isFront || onBike) 0f else rightZ * 0.42f
+
+            // Direction vector from pivot toward the orbiting camera
+            val dirX = if (isFront) fx else -fx
+            val dirY = if (isFront) -fy * 0.55f + 0.12f else -fy * 0.85f + (if (onBike) 0.22f else 0.16f)
+            val dirZ = if (isFront) fz else -fz
+            val dirLen = kotlin.math.sqrt((dirX * dirX + dirY * dirY + dirZ * dirZ).toDouble()).toFloat().coerceAtLeast(0.001f)
+            val ndx = dirX / dirLen
+            val ndy = dirY / dirLen
+            val ndz = dirZ / dirLen
+
+            // 24-step smooth collision raycast with 0.30f wall margin so camera NEVER clips inside blocks!
+            var hitSafeDist = desiredDist
+            val steps = 24
+            for (step in 1..steps) {
+                val d = (step / steps.toFloat()) * desiredDist
+                val tx = pivotX + ndx * d
+                val ty = pivotY + ndy * d
+                val tz = pivotZ + ndz * d
+                if (world.isSolid(floor(tx).toInt(), floor(ty).toInt(), floor(tz).toInt())) {
+                    hitSafeDist = (d - 0.32f).coerceAtLeast(0.65f)
+                    break
+                }
+            }
+            // Pull in instantaneously on wall hit; smoothly extend back out when clear (zero snappy jumping!)
+            smoothCamDist = if (hitSafeDist < smoothCamDist) {
+                hitSafeDist
+            } else {
+                smoothCamDist + (hitSafeDist - smoothCamDist) * (dt * 8.5f).coerceIn(0f, 1f)
+            }
+
+            camX = pivotX + ndx * smoothCamDist
+            camY = (pivotY + ndy * smoothCamDist).coerceAtLeast(1.4f)
+            camZ = pivotZ + ndz * smoothCamDist
+
+            if (isFront) {
+                // Selfie camera frames player's upper body & face smoothly
+                lookX = baseEyeX
+                lookY = baseEyeY - 0.15f
+                lookZ = baseEyeZ
+            } else {
+                // Over-shoulder / Bike Chase camera converges smoothly onto the player's true forward aim point
+                val aimDist = 18.0f
+                lookX = baseEyeX + fx * aimDist
+                lookY = baseEyeY + fy * aimDist
+                lookZ = baseEyeZ + fz * aimDist
+            }
+        }
+
+        val targetFov = when {
+            player.bikeNitroTimer > 0f -> 88f
+            player.activeBike != null && player.bikeSpeedKmh > 60 -> 82f
+            player.isEffectivelySprinting && player.moveSpeedFraction > 0.25f -> 80f
+            mode != CameraMode.FIRST_PERSON -> 74f
+            else -> 72f
+        }
         if (kotlin.math.abs(currentFov - targetFov) > 0.04f) {
             currentFov += (targetFov - currentFov) * (dt * 9.5f).coerceIn(0f, 1f)
-            Matrix.perspectiveM(projMatrix, 0, currentFov, viewportAspect, 0.1f, 165f)
+            Matrix.perspectiveM(projMatrix, 0, currentFov, viewportAspect, 0.12f, 260f)
         }
 
         Matrix.setLookAtM(viewMatrix, 0, camX, camY, camZ, lookX, lookY, lookZ, 0f, 1f, 0f)
         Matrix.multiplyMM(vpMatrix, 0, projMatrix, 0, viewMatrix, 0)
 
-        // Pass 0: Sun Halo & Moon (hidden when deeply underwater)
         if (!player.isUnderwater) {
             drawCelestialBodies(camX, camY, camZ, timeOfDay)
         }
 
+        // Trigger async background pre-warming whenever entering a new chunk so borders NEVER stutter!
+        val curCx = Math.floorDiv(floor(player.x).toInt(), CHUNK_SIZE)
+        val curCz = Math.floorDiv(floor(player.z).toInt(), CHUNK_SIZE)
+        if (curCx != lastPrewarmCx || curCz != lastPrewarmCz) {
+            lastPrewarmCx = curCx
+            lastPrewarmCz = curCz
+            val rd = renderDistance
+            prewarmExecutor.execute {
+                world.prewarmChunksAround(curCx, curCz, rd + 1)
+            }
+        }
+
+        val rebuildBudget = if (player.moveSpeedFraction > 0.15f) 1 else 2
         val meshes = world.prepareVisibleMeshes(
             playerX = player.x,
             playerZ = player.z,
             renderDistance = renderDistance,
-            maxRebuildsPerFrame = 2
+            maxRebuildsPerFrame = rebuildBudget
         )
 
-        val fogEnd = if (player.isUnderwater) 18f else (renderDistance * CHUNK_SIZE + 8).toFloat()
-        val fogStart = if (player.isUnderwater) 2.5f else (fogEnd * 0.52f).coerceAtLeast(14f)
+        val fogEnd = if (player.isUnderwater) 18f else (renderDistance * CHUNK_SIZE + 14).toFloat()
+        val fogStart = if (player.isUnderwater) 2.5f else (fogEnd * 0.56f).coerceAtLeast(18f)
 
         // Pass 1: Opaque Terrain Blocks
         GLES20.glUseProgram(voxelProgram)
@@ -319,7 +499,7 @@ class VoxelGLRenderer(
             drawVoxelBuffer(buf, m.opaqueVertexCount, aPos, aTex, aShade)
         }
 
-        // Pass 2: Flowers, Tall Grass, Glass & Ice (non-water translucent / alpha-cutout)
+        // Pass 2: Flowers, Tall Grass, Glass & Ice
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
         GLES20.glDisable(GLES20.GL_CULL_FACE)
@@ -334,18 +514,21 @@ class VoxelGLRenderer(
         GLES20.glDisableVertexAttribArray(aTex)
         GLES20.glDisableVertexAttribArray(aShade)
 
-        // Pass 3: 3D Articulated Entities, 3rd-Person Avatar, Gun Bullets & Debris/Bubble Particles
+        // Pass 3: Animated Glowing Molten Lava Shader (Volcanoes & Underground Lava!)
+        drawAnimatedLava(meshes, camX, camY, camZ, sky, fogStart, fogEnd)
+
+        // Pass 4: 3D Articulated Entities, 3rd-Person Avatar, Gun Bullets & Particles
         drawLivingEntities(camX, camY, camZ, sky, fogStart, fogEnd)
 
-        // Pass 4: Animated Ocean, Rivers & Cascading Waterfalls Shader!
+        // Pass 5: Animated Crystal Water, Rivers, Underground Aquifers & Cascading Waterfalls Shader!
         drawAnimatedWater(meshes, camX, camY, camZ, sky, fogStart, fogEnd)
 
-        // Pass 5: Dynamic 3D Rain Weather (when enabled)
+        // Pass 6: Dynamic 3D Rain Weather
         if (rainEnabled && !player.isUnderwater) {
             drawRainStreaks(player.x, player.y, player.z)
         }
 
-        // Pass 6: Exact Raycast Target Block Wireframe
+        // Pass 7: Exact Raycast Target Block Wireframe
         val hit = player.raycastTarget(world, maxDistance = 6.5f)
         currentHit = hit
         if (hit != null) {
@@ -360,21 +543,28 @@ class VoxelGLRenderer(
             fpsCounter = 0
             fpsTimerMs = nowMs
         }
-        if (nowMs - lastTelemetryMs >= 120L) {
+        if (nowMs - lastTelemetryMs >= 160L) {
             lastTelemetryMs = nowMs
             val px = floor(player.x).toInt()
             val py = floor(player.y).toInt()
             val pz = floor(player.z).toInt()
             soundEngine.isNightTime = isNight
             soundEngine.isUnderwater = player.isUnderwater
+            soundEngine.isSittingOnWater = player.sittingOnWater
+            soundEngine.isRidingBike = player.activeBike != null
 
-            if (nowMs - lastMinimapMs >= 750L || cachedMinimapColors.isEmpty()) {
+            if (nowMs - lastMinimapMs >= 1100L || cachedMinimapColors.isEmpty()) {
                 lastMinimapMs = nowMs
-                cachedMinimapColors = world.sampleMinimapColors(px, pz, gridSize = 21, step = 2)
-                soundEngine.isNearWater = world.isNearWater(px, pz)
+                // Expanded 93x93 block live map radar covering Real Estate Township, Roads & Landmarks!
+                cachedMinimapColors = world.sampleMinimapColors(px, pz, gridSize = 31, step = 3)
+                soundEngine.isNearWater = world.isNearWater(px, py, pz)
+                soundEngine.isNearLava = world.isNearLava(px, py, pz)
             }
 
+            val toastToSend = pendingWorldToast
+            pendingWorldToast = null
             val (totalEnt, activeZom) = entityManager.activeCounts()
+            val nearbyList = entityManager.findNearbyInteractiveEntities(player, maxRange = 7.5f)
             onTelemetry(
                 HudTelemetry(
                     fps = displayedFps,
@@ -386,6 +576,12 @@ class VoxelGLRenderer(
                     flying = player.flying,
                     inWater = player.inWater,
                     isUnderwater = player.isUnderwater,
+                    inLava = player.inLava,
+                    sittingOnWater = player.sittingOnWater,
+                    waterAvailableForSit = player.isWaterAvailableForSit(world),
+                    activeBike = player.activeBike,
+                    bikeSpeedKmh = player.bikeSpeedKmh,
+                    bikeNitroActive = player.bikeNitroTimer > 0f,
                     oxygen = player.oxygen.toInt().coerceIn(0, 10),
                     sprinting = player.isEffectivelySprinting,
                     sneaking = player.sneaking,
@@ -395,8 +591,12 @@ class VoxelGLRenderer(
                     activeZombies = activeZom,
                     totalEntities = totalEnt,
                     connectedAnimals = entityManager.connectedAnimalCount(),
-                    minimapBlips = entityManager.snapshotMinimapBlips(player.x, player.z, maxRange = 22f),
-                    minimapColors = cachedMinimapColors
+                    minimapBlips = entityManager.snapshotMinimapBlips(player.x, player.z, maxRange = 46f),
+                    minimapColors = cachedMinimapColors,
+                    worldEventToast = toastToSend,
+                    damageTick = damageCounter,
+                    nearbyEntity = nearbyList.firstOrNull(),
+                    nearbyEntities = nearbyList
                 )
             )
         }
@@ -441,6 +641,42 @@ class VoxelGLRenderer(
         GLES20.glDisableVertexAttribArray(wPos)
         GLES20.glDisableVertexAttribArray(wTex)
         GLES20.glDisableVertexAttribArray(wShade)
+    }
+
+    private fun drawAnimatedLava(
+        meshes: List<ChunkMeshData>,
+        camX: Float, camY: Float, camZ: Float,
+        sky: DayNightPalette, fogStart: Float, fogEnd: Float
+    ) {
+        GLES20.glUseProgram(lavaProgram)
+        GLES20.glUniformMatrix4fv(vMvp, 1, false, vpMatrix, 0)
+        GLES20.glUniform3f(vCamPos, camX, camY, camZ)
+        GLES20.glUniform3f(vFogColor, sky.skyR, sky.skyG, sky.skyB)
+        GLES20.glUniform1f(vFogStart, fogStart)
+        GLES20.glUniform1f(vFogEnd, fogEnd)
+        GLES20.glUniform1f(vTime, elapsedTime)
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, atlasTextureId)
+        GLES20.glUniform1i(vTexture, 0)
+
+        GLES20.glEnableVertexAttribArray(vPos)
+        GLES20.glEnableVertexAttribArray(vTex)
+        GLES20.glEnableVertexAttribArray(vShade)
+
+        GLES20.glDisable(GLES20.GL_BLEND)
+        GLES20.glDisable(GLES20.GL_CULL_FACE)
+
+        for (i in meshes.indices) {
+            val m = meshes[i]
+            val buf = m.lavaBuffer ?: continue
+            drawVoxelBuffer(buf, m.lavaVertexCount, vPos, vTex, vShade)
+        }
+
+        GLES20.glEnable(GLES20.GL_CULL_FACE)
+        GLES20.glDisableVertexAttribArray(vPos)
+        GLES20.glDisableVertexAttribArray(vTex)
+        GLES20.glDisableVertexAttribArray(vShade)
     }
 
     private fun drawLivingEntities(
@@ -524,14 +760,14 @@ class VoxelGLRenderer(
 
     private fun drawCelestialBodies(eyeX: Float, eyeY: Float, eyeZ: Float, t: Float) {
         val angle = t * 2f * PI.toFloat()
-        val dist = 85f
+        val dist = 132f
         val sunX = eyeX + cos(angle) * dist
         val sunY = eyeY + sin(angle) * dist
-        val sunZ = eyeZ - 18f
+        val sunZ = eyeZ - 24f
 
         val moonX = eyeX - cos(angle) * dist
         val moonY = eyeY - sin(angle) * dist
-        val moonZ = eyeZ - 18f
+        val moonZ = eyeZ - 24f
 
         GLES20.glUseProgram(lineProgram)
         GLES20.glDepthMask(false)
@@ -691,7 +927,7 @@ class VoxelGLRenderer(
             }
         """
 
-        // Animated Water & Waterfall Vertex + Fragment Shaders (surface waves + shimmering caustics!)
+        // Upgraded Layered Wave Animated Water & Waterfall Shader
         private const val WATER_VERTEX_SHADER = """
             uniform mat4 uMVPMatrix;
             uniform vec3 uCameraPos;
@@ -705,8 +941,9 @@ class VoxelGLRenderer(
             varying vec3 vWorldPos;
             void main() {
                 vec3 pos = aPosition;
-                float wave = sin(pos.x * 2.1 + uTime * 3.1) * cos(pos.z * 1.9 + uTime * 2.6) * 0.06;
-                pos.y += wave;
+                float wave1 = sin(pos.x * 2.2 + uTime * 3.4) * cos(pos.z * 2.0 + uTime * 2.8) * 0.065;
+                float wave2 = sin((pos.x - pos.z) * 3.1 - uTime * 4.2) * 0.035;
+                pos.y += (wave1 + wave2);
                 gl_Position = uMVPMatrix * vec4(pos, 1.0);
                 vTexCoord = aTexCoord;
                 vShade = aShade;
@@ -729,11 +966,60 @@ class VoxelGLRenderer(
             varying vec3 vWorldPos;
             void main() {
                 vec4 tex = texture2D(uTexture, vTexCoord);
-                float shimmer = 0.90 + 0.14 * sin(vWorldPos.x * 3.5 + vWorldPos.y * 5.0 - uTime * 5.2 + vWorldPos.z * 3.2);
-                float foam = smoothstep(0.92, 1.04, shimmer) * 0.25;
-                vec3 lit = (tex.rgb * shimmer + vec3(foam)) * vShade * uDaylight;
+                float ripple1 = sin(vWorldPos.x * 4.0 + vWorldPos.y * 5.2 - uTime * 5.6 + vWorldPos.z * 3.4);
+                float ripple2 = cos(vWorldPos.x * 3.2 - vWorldPos.z * 4.4 + uTime * 4.1);
+                float shimmer = 0.90 + 0.14 * (ripple1 * 0.65 + ripple2 * 0.35);
+                float foam = smoothstep(0.95, 1.04, shimmer) * 0.32;
+                vec3 lit = (tex.rgb * shimmer + vec3(foam * 0.85, foam * 0.96, foam)) * vShade * uDaylight;
                 float fogFactor = clamp((vDist - uFogStart) / max(1.0, (uFogEnd - uFogStart)), 0.0, 1.0);
-                gl_FragColor = vec4(mix(lit, uFogColor, fogFactor), 0.80);
+                gl_FragColor = vec4(mix(lit, uFogColor, fogFactor), 0.82);
+            }
+        """
+
+        // Dedicated Animated Volcanic Lava Shader (undulating molten ripples + self-illuminated magma veins!)
+        private const val LAVA_VERTEX_SHADER = """
+            uniform mat4 uMVPMatrix;
+            uniform vec3 uCameraPos;
+            uniform float uTime;
+            attribute vec3 aPosition;
+            attribute vec2 aTexCoord;
+            attribute float aShade;
+            varying vec2 vTexCoord;
+            varying float vShade;
+            varying float vDist;
+            varying vec3 vWorldPos;
+            void main() {
+                vec3 pos = aPosition;
+                float swell = sin(pos.x * 1.6 + uTime * 1.9) * cos(pos.z * 1.5 - uTime * 1.6) * 0.055;
+                pos.y += swell;
+                gl_Position = uMVPMatrix * vec4(pos, 1.0);
+                vTexCoord = aTexCoord;
+                vShade = aShade;
+                vDist = distance(pos, uCameraPos);
+                vWorldPos = pos;
+            }
+        """
+
+        private const val LAVA_FRAGMENT_SHADER = """
+            precision mediump float;
+            uniform sampler2D uTexture;
+            uniform vec3 uFogColor;
+            uniform float uFogStart;
+            uniform float uFogEnd;
+            uniform float uTime;
+            varying vec2 vTexCoord;
+            varying float vShade;
+            varying float vDist;
+            varying vec3 vWorldPos;
+            void main() {
+                vec4 tex = texture2D(uTexture, vTexCoord);
+                float vein1 = sin(vWorldPos.x * 3.2 + uTime * 2.4 + sin(vWorldPos.z * 2.5 - uTime * 1.8));
+                float vein2 = cos(vWorldPos.z * 3.6 - vWorldPos.y * 4.0 - uTime * 3.1);
+                float heat = 0.5 + 0.5 * (vein1 * 0.6 + vein2 * 0.4);
+                vec3 magmaGlow = mix(vec3(0.95, 0.22, 0.02), vec3(1.0, 0.92, 0.28), smoothstep(0.35, 0.92, heat));
+                vec3 lit = mix(tex.rgb, magmaGlow, 0.58) * (0.85 + 0.25 * vShade);
+                float fogFactor = clamp((vDist - uFogStart) / max(1.0, (uFogEnd - uFogStart)), 0.0, 1.0);
+                gl_FragColor = vec4(mix(lit, uFogColor, fogFactor * 0.75), 1.0);
             }
         """
 

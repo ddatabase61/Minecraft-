@@ -17,6 +17,12 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.email == 'ddatabase61@gmail.com';
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -37,6 +43,36 @@ service cloud.firestore {
     }
 
     // --- VALIDATION BLUEPRINTS ---
+    function isValidAppUpdateConfig(data) {
+      return data.keys().hasAll([
+               'latestVersionCode',
+               'latestVersionName',
+               'apkUrl',
+               'forceUpdate',
+               'releaseNotes'
+             ]) &&
+             data.keys().hasOnly([
+               'latestVersionCode',
+               'latestVersionName',
+               'apkUrl',
+               'forceUpdate',
+               'releaseNotes'
+             ]) &&
+             data.latestVersionCode is int &&
+             data.latestVersionCode >= 1 &&
+             data.latestVersionCode <= 999999999 &&
+             data.latestVersionName is string &&
+             data.latestVersionName.size() >= 1 &&
+             data.latestVersionName.size() <= 40 &&
+             data.apkUrl is string &&
+             data.apkUrl.size() >= 12 &&
+             data.apkUrl.size() <= 1024 &&
+             data.apkUrl.matches('^https://.*') &&
+             data.forceUpdate is bool &&
+             data.releaseNotes is string &&
+             data.releaseNotes.size() <= 4000;
+    }
+
     function isValidBuilderProfile(data, expectedUserId) {
       return data.keys().hasAll([
                'userId',
@@ -127,7 +163,7 @@ service cloud.firestore {
              data.biome is string &&
              data.biome.size() >= 1 &&
              data.biome.size() <= 30 &&
-             data.biome in ['EMERALD_VALLEY', 'DESERT_DUNES', 'FROST_PEAKS', 'VOLCANIC_BADLANDS'] &&
+             data.biome in ['EMERALD_VALLEY', 'FLOWER_PARADISE', 'DESERT_DUNES', 'FROST_PEAKS', 'VOLCANIC_BADLANDS', 'JUNGLE_RIVER', 'OCEAN_ISLANDS', 'SKY_KINGDOM'] &&
              data.gameMode is string &&
              data.gameMode.size() >= 1 &&
              data.gameMode.size() <= 20 &&
@@ -161,6 +197,31 @@ service cloud.firestore {
              data.createdAt <= request.time &&
              data.updatedAt is timestamp &&
              data.updatedAt <= request.time;
+    }
+
+    // --- APP AUTO-UPDATE CONFIG COLLECTION ---
+    // Publicly readable at /app_config/update so every client can check for new APK releases.
+    // Strictly writable only by verified admin email.
+    match /app_config/{configId} {
+      allow get: if configId == 'update' || isAdmin();
+      allow list: if isAdmin();
+
+      allow create: if isAdmin() &&
+                       configId == 'update' &&
+                       isValidAppUpdateConfig(incoming());
+
+      allow update: if isAdmin() &&
+                       configId == 'update' &&
+                       isValidAppUpdateConfig(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'latestVersionCode',
+                         'latestVersionName',
+                         'apkUrl',
+                         'forceUpdate',
+                         'releaseNotes'
+                       ]);
+
+      allow delete: if isAdmin() && configId == 'update';
     }
 
     // --- USER PROFILE COLLECTION ---

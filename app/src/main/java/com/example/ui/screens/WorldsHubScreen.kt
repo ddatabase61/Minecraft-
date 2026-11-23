@@ -22,14 +22,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.Campaign
 import androidx.compose.material.icons.rounded.Casino
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.Delete
@@ -78,6 +85,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -86,6 +94,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.data.AdminStudioStore
 import com.example.data.model.BiomeType
 import com.example.data.model.BlockType
 import com.example.data.model.BuilderProfile
@@ -107,8 +116,13 @@ fun WorldsHubScreen(
     val busyMessage by viewModel.busyMessage.collectAsStateWithLifecycle()
     val feedbackMessage by viewModel.feedbackMessage.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
+    val adminStore = remember(context) { AdminStudioStore.getInstance(context) }
+    val adminSnapshot by adminStore.snapshot.collectAsStateWithLifecycle()
+
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showHubAdminSheet by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<VoxelWorldDoc?>(null) }
     var deleteTarget by remember { mutableStateOf<VoxelWorldDoc?>(null) }
 
@@ -210,6 +224,9 @@ fun WorldsHubScreen(
                             worldsState = worldsState,
                             profile = profile,
                             isCloudBacked = viewModel.isCloudBacked,
+                            liveAnnouncement = if (adminSnapshot.liveMap.published) adminSnapshot.liveMap.announcementBanner else "",
+                            liveMapTitle = if (adminSnapshot.liveMap.published) adminSnapshot.liveMap.title else "",
+                            onOpenAdminStudio = { showHubAdminSheet = true },
                             onOpenWorld = onOpenWorld,
                             onCreateWorldClick = { showCreateDialog = true },
                             onQuickCreateStarter = { name, biome, mode ->
@@ -323,6 +340,33 @@ fun WorldsHubScreen(
             }
         )
     }
+
+    if (showHubAdminSheet) {
+        AdminPanelSheet(
+            snapshot = adminSnapshot,
+            inGameWorld = false,
+            defaultWorldTitle = "Admin Live Royal World",
+            onClaimAdmin = adminStore::claimAdminCredentials,
+            onLoginAdmin = adminStore::loginAdmin,
+            onUpdatePassword = adminStore::updateAdminPassword,
+            onLockAdmin = adminStore::lockAdminSession,
+            onImportObjUri = adminStore::importObjFileFromUri,
+            onSaveCustomModel = { model, _ -> adminStore.saveCustomModel(model) },
+            onDeleteCustomModel = adminStore::deleteCustomModel,
+            onSpawnCustomModel = {},
+            onPlantTree = {},
+            onPlantForest = {},
+            onCreateWaterLake = {},
+            onBuildStructure = { _, _ -> },
+            onSetTimeDay = {},
+            onSetTimeNight = {},
+            onToggleRain = {},
+            onPublishLiveMap = { title, banner ->
+                adminStore.publishLiveMap(title, BiomeType.EMERALD_VALLEY, banner)
+            },
+            onDismiss = { showHubAdminSheet = false }
+        )
+    }
 }
 
 @Composable
@@ -330,6 +374,9 @@ private fun WorldsTabContent(
     worldsState: UiState<List<VoxelWorldDoc>>,
     profile: BuilderProfile?,
     isCloudBacked: Boolean,
+    liveAnnouncement: String,
+    liveMapTitle: String,
+    onOpenAdminStudio: () -> Unit,
     onOpenWorld: (String) -> Unit,
     onCreateWorldClick: () -> Unit,
     onQuickCreateStarter: (String, BiomeType, GameMode) -> Unit,
@@ -343,7 +390,122 @@ private fun WorldsTabContent(
         contentPadding = PaddingValues(bottom = 104.dp)
     ) {
         item {
-            HeroWorldHeader(profile = profile)
+            HeroWorldHeader(
+                profile = profile,
+                onOpenAdminStudio = onOpenAdminStudio
+            )
+        }
+
+        if (liveMapTitle.isNotBlank() || liveAnnouncement.isNotBlank()) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF281E0B),
+                    border = BorderStroke(1.dp, Color(0xFFFFD54F)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Campaign,
+                            contentDescription = "Admin Live Map",
+                            tint = Color(0xFFFFD54F)
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "ADMIN LIVE: ${liveMapTitle.ifBlank { "Royal World" }}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFFE57F)
+                            )
+                            if (liveAnnouncement.isNotBlank()) {
+                                Text(
+                                    text = liveAnnouncement,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFFFF8E1)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp, bottom = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Explore 8 Minecraft-Style Maps (1-Tap Play)",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    val featuredMaps = listOf(
+                        Triple("Mega Flower Valley", BiomeType.FLOWER_PARADISE, GameMode.CREATIVE),
+                        Triple("Royal Flower Kingdom", BiomeType.EMERALD_VALLEY, GameMode.SURVIVAL),
+                        Triple("Amazon Jungle", BiomeType.JUNGLE_RIVER, GameMode.SURVIVAL),
+                        Triple("Floating Sky Islands", BiomeType.SKY_KINGDOM, GameMode.CREATIVE),
+                        Triple("Coral Archipelago", BiomeType.OCEAN_ISLANDS, GameMode.SURVIVAL),
+                        Triple("Pyramid Oasis", BiomeType.DESERT_DUNES, GameMode.SURVIVAL),
+                        Triple("Himalaya Citadel", BiomeType.FROST_PEAKS, GameMode.CREATIVE),
+                        Triple("Jwalamukhi & Caves", BiomeType.VOLCANIC_BADLANDS, GameMode.SURVIVAL)
+                    )
+                    items(featuredMaps, key = { it.second.name }) { (title, biome, mode) ->
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = BorderStroke(1.2.dp, biome.accentColor.copy(alpha = 0.55f)),
+                            modifier = Modifier
+                                .width(156.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { onQuickCreateStarter(title, biome, mode) }
+                                .testTag("quick_map_${biome.name.lowercase()}")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    MiniVoxelBlockIcon(block = biomePreviewBlock(biome), size = 30.dp)
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = biome.accentColor,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Text(
+                                    text = biome.tagline,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         item {
@@ -443,7 +605,10 @@ private fun WorldsTabContent(
 }
 
 @Composable
-private fun HeroWorldHeader(profile: BuilderProfile?) {
+private fun HeroWorldHeader(
+    profile: BuilderProfile?,
+    onOpenAdminStudio: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -469,6 +634,37 @@ private fun HeroWorldHeader(profile: BuilderProfile?) {
                 )
         )
 
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xCC1C1609),
+            border = BorderStroke(1.2.dp, Color(0xFFFFD54F)),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 34.dp, end = 16.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onOpenAdminStudio)
+                .testTag("hub_admin_studio_button")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AdminPanelSettings,
+                    contentDescription = "Open Admin Studio",
+                    tint = Color(0xFFFFD54F),
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "Admin Panel",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFFFE57F)
+                )
+            }
+        }
+
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -491,6 +687,15 @@ private fun HeroWorldHeader(profile: BuilderProfile?) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Image(
+                    painter = painterResource(id = R.drawable.player_custom_avatar),
+                    contentDescription = "Your Character Portrait",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                )
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
@@ -568,9 +773,11 @@ private fun EmptyWorldsCard(
         )
 
         val starters = listOf(
-            Triple("Emerald Outpost", BiomeType.EMERALD_VALLEY, GameMode.SURVIVAL),
-            Triple("Frost Citadel", BiomeType.FROST_PEAKS, GameMode.CREATIVE),
-            Triple("Volcanic Forge", BiomeType.VOLCANIC_BADLANDS, GameMode.SURVIVAL)
+            Triple("Mega Flower Valley", BiomeType.FLOWER_PARADISE, GameMode.CREATIVE),
+            Triple("Royal Flower Kingdom", BiomeType.EMERALD_VALLEY, GameMode.SURVIVAL),
+            Triple("Amazon Jungle River", BiomeType.JUNGLE_RIVER, GameMode.SURVIVAL),
+            Triple("Floating Sky Islands", BiomeType.SKY_KINGDOM, GameMode.CREATIVE),
+            Triple("Volcanic Jwalamukhi", BiomeType.VOLCANIC_BADLANDS, GameMode.SURVIVAL)
         )
         starters.forEach { (title, biome, mode) ->
             Surface(
@@ -586,12 +793,7 @@ private fun EmptyWorldsCard(
                     modifier = Modifier.padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val previewBlock = when (biome) {
-                        BiomeType.EMERALD_VALLEY -> BlockType.GRASS
-                        BiomeType.DESERT_DUNES -> BlockType.SANDSTONE
-                        BiomeType.FROST_PEAKS -> BlockType.SNOW
-                        BiomeType.VOLCANIC_BADLANDS -> BlockType.OBSIDIAN
-                    }
+                    val previewBlock = biomePreviewBlock(biome)
                     MiniVoxelBlockIcon(block = previewBlock, size = 40.dp)
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
@@ -613,6 +815,17 @@ private fun EmptyWorldsCard(
     }
 }
 
+private fun biomePreviewBlock(biome: BiomeType): BlockType = when (biome) {
+    BiomeType.EMERALD_VALLEY -> BlockType.GRASS
+    BiomeType.FLOWER_PARADISE -> BlockType.FLOWER_PINK
+    BiomeType.DESERT_DUNES -> BlockType.SANDSTONE
+    BiomeType.FROST_PEAKS -> BlockType.SNOW
+    BiomeType.VOLCANIC_BADLANDS -> BlockType.LAVA
+    BiomeType.JUNGLE_RIVER -> BlockType.LEAVES
+    BiomeType.OCEAN_ISLANDS -> BlockType.WATER
+    BiomeType.SKY_KINGDOM -> BlockType.CHERRY_LEAVES
+}
+
 @Composable
 private fun WorldCard(
     world: VoxelWorldDoc,
@@ -625,12 +838,7 @@ private fun WorldCard(
     val mode = world.resolvedGameMode()
     var menuExpanded by remember { mutableStateOf(false) }
 
-    val iconBlock = when (biome) {
-        BiomeType.EMERALD_VALLEY -> BlockType.GRASS
-        BiomeType.DESERT_DUNES -> BlockType.SANDSTONE
-        BiomeType.FROST_PEAKS -> BlockType.SNOW
-        BiomeType.VOLCANIC_BADLANDS -> BlockType.LAVA
-    }
+    val iconBlock = biomePreviewBlock(biome)
 
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -787,7 +995,10 @@ private fun CreateWorldDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
                 OutlinedTextField(
                     value = worldName,
                     onValueChange = { if (it.length <= 50) worldName = it },

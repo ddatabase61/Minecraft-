@@ -16,8 +16,15 @@ android {
     applicationId = "com.aistudio.blockforge.kxvzrm"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // =========================================================================
+    // RELEASE UPDATE REMINDER (Firebase Auto-Update के लिए ज़रूरी):
+    // हर नए APK रिलीज़ से पहले versionCode को +1 बढ़ाएँ (जैसे 1 -> 2 -> 3)
+    // और versionName अपडेट करें (जैसे "1.0" -> "1.1"), फिर GitHub Releases पर
+    // नया APK अपलोड कर Firestore के app_config/update में latestVersionCode
+    // और apkUrl अपडेट कर दें। कोई कोड बदलने की ज़रूरत नहीं होगी!
+    // =========================================================================
+    versionCode = 3
+    versionName = "1.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -107,14 +114,14 @@ dependencies {
   // implementation(libs.androidx.room.runtime)
   // implementation(libs.coil.compose)
   // implementation(libs.converter.moshi)
-  // implementation(libs.firebase.ai)
+  implementation(libs.firebase.ai)
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.auth)
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
-  // implementation(libs.firebase.appcheck.recaptcha)
-  // implementation(libs.firebase.appcheck.debug)
+  implementation(libs.firebase.appcheck.recaptcha)
+  implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   // implementation(libs.logging.interceptor)

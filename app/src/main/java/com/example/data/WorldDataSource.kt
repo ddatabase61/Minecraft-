@@ -53,33 +53,36 @@ interface WorldDataSource {
 class GuestLocalDataSource(context: Context) : WorldDataSource {
     override val isCloudBacked: Boolean = false
 
+    private val lock = Any()
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val profileFlow = MutableStateFlow<BuilderProfile?>(loadProfile())
     private val worldsFlow = MutableStateFlow<List<VoxelWorldDoc>>(loadWorlds())
 
     init {
-        if (worldsFlow.value.isEmpty()) {
-            val starter = VoxelWorldDoc(
-                id = "guest_starter_valley",
-                userId = GUEST_UID,
-                name = "Emerald Valley (Guest)",
-                biome = BiomeType.EMERALD_VALLEY.name,
-                gameMode = GameMode.CREATIVE.name,
-                seed = 424242L,
-                timeOfDay = 0.22,
-                pickaxeTier = 1L,
-                blocksMined = 0L,
-                blocksPlaced = 0L,
-                playerX = 8.5,
-                playerY = 18.0,
-                playerZ = 8.5,
-                blockDeltas = emptyMap(),
-                inventory = defaultStarterInventory(GameMode.CREATIVE),
-                hotbar = defaultHotbar(),
-                createdAt = Timestamp.now(),
-                updatedAt = Timestamp.now()
-            )
-            persistWorlds(listOf(starter))
+        synchronized(lock) {
+            if (worldsFlow.value.isEmpty()) {
+                val starter = VoxelWorldDoc(
+                    id = "guest_starter_valley",
+                    userId = GUEST_UID,
+                    name = "Emerald Valley (Guest)",
+                    biome = BiomeType.EMERALD_VALLEY.name,
+                    gameMode = GameMode.CREATIVE.name,
+                    seed = 424242L,
+                    timeOfDay = 0.22,
+                    pickaxeTier = 1L,
+                    blocksMined = 0L,
+                    blocksPlaced = 0L,
+                    playerX = 8.5,
+                    playerY = 18.0,
+                    playerZ = 8.5,
+                    blockDeltas = emptyMap(),
+                    inventory = defaultStarterInventory(GameMode.CREATIVE),
+                    hotbar = defaultHotbar(),
+                    createdAt = Timestamp.now(),
+                    updatedAt = Timestamp.now()
+                )
+                persistWorldsLocked(listOf(starter), commitSync = true)
+            }
         }
     }
 
@@ -138,7 +141,7 @@ class GuestLocalDataSource(context: Context) : WorldDataSource {
         biome: BiomeType,
         gameMode: GameMode,
         seed: Long
-    ): Result<VoxelWorldDoc> {
+    ): Result<VoxelWorldDoc> = synchronized(lock) {
         val cleanName = name.trim().take(50).ifBlank { biome.displayName }
         val doc = VoxelWorldDoc(
             id = "guest_${UUID.randomUUID().toString().replace("-", "").take(12)}",
@@ -160,12 +163,14 @@ class GuestLocalDataSource(context: Context) : WorldDataSource {
             createdAt = Timestamp.now(),
             updatedAt = Timestamp.now()
         )
-        persistWorlds(listOf(doc) + worldsFlow.value)
-        return Result.success(doc)
+        persistWorldsLocked(listOf(doc) + worldsFlow.value, commitSync = true)
+        Result.success(doc)
     }
 
-    override suspend fun getWorld(worldId: String): Result<VoxelWorldDoc?> {
-        return Result.success(worldsFlow.value.firstOrNull { it.id == worldId })
+    override suspend fun getWorld(worldId: String): Result<VoxelWorldDoc?> = synchronized(lock) {
+        val found = worldsFlow.value.firstOrNull { it.id == worldId }
+            ?: loadWorlds().firstOrNull { it.id == worldId }
+        Result.success(found)
     }
 
     override suspend fun saveWorldState(
@@ -181,7 +186,7 @@ class GuestLocalDataSource(context: Context) : WorldDataSource {
         blockDeltas: Map<String, Long>,
         inventory: Map<String, Long>,
         hotbar: List<String>
-    ): Result<Unit> {
+    ): Result<Unit> = synchronized(lock) {
         val updated = worldsFlow.value.map { w ->
             if (w.id == worldId) {
                 w.copy(
@@ -202,23 +207,23 @@ class GuestLocalDataSource(context: Context) : WorldDataSource {
                 w
             }
         }
-        persistWorlds(updated)
-        return Result.success(Unit)
+        persistWorldsLocked(updated, commitSync = false)
+        Result.success(Unit)
     }
 
-    override suspend fun renameWorld(worldId: String, newName: String): Result<Unit> {
+    override suspend fun renameWorld(worldId: String, newName: String): Result<Unit> = synchronized(lock) {
         val clean = newName.trim().take(50)
-        if (clean.isEmpty()) return Result.failure(IllegalArgumentException("Name cannot be blank"))
+        if (clean.isEmpty()) return@synchronized Result.failure(IllegalArgumentException("Name cannot be blank"))
         val updated = worldsFlow.value.map { w ->
             if (w.id == worldId) w.copy(name = clean, updatedAt = Timestamp.now()) else w
         }
-        persistWorlds(updated)
-        return Result.success(Unit)
+        persistWorldsLocked(updated, commitSync = true)
+        Result.success(Unit)
     }
 
-    override suspend fun deleteWorld(worldId: String): Result<Unit> {
-        persistWorlds(worldsFlow.value.filterNot { it.id == worldId })
-        return Result.success(Unit)
+    override suspend fun deleteWorld(worldId: String): Result<Unit> = synchronized(lock) {
+        persistWorldsLocked(worldsFlow.value.filterNot { it.id == worldId }, commitSync = true)
+        Result.success(Unit)
     }
 
     private fun persistProfile(profile: BuilderProfile) {
@@ -259,7 +264,7 @@ class GuestLocalDataSource(context: Context) : WorldDataSource {
         }
     }
 
-    private fun persistWorlds(worlds: List<VoxelWorldDoc>) {
+    private fun persistWorldsLocked(worlds: List<VoxelWorldDoc>, commitSync: Boolean) {
         worldsFlow.value = worlds
         val arr = JSONArray()
         worlds.forEach { w ->
@@ -282,7 +287,12 @@ class GuestLocalDataSource(context: Context) : WorldDataSource {
             }
             arr.put(obj)
         }
-        prefs.edit().putString(KEY_WORLDS, arr.toString()).apply()
+        val editor = prefs.edit().putString(KEY_WORLDS, arr.toString())
+        if (commitSync) {
+            editor.commit()
+        } else {
+            editor.apply()
+        }
     }
 
     private fun loadWorlds(): List<VoxelWorldDoc> {
@@ -334,5 +344,13 @@ class GuestLocalDataSource(context: Context) : WorldDataSource {
         private const val PREFS_NAME = "blockforge_guest_store"
         private const val KEY_PROFILE = "guest_profile"
         private const val KEY_WORLDS = "guest_worlds"
+
+        @Volatile
+        private var instance: GuestLocalDataSource? = null
+
+        fun getInstance(context: Context): GuestLocalDataSource =
+            instance ?: synchronized(this) {
+                instance ?: GuestLocalDataSource(context.applicationContext).also { instance = it }
+            }
     }
 }

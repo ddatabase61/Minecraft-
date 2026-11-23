@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,11 +28,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AddBox
+import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
@@ -42,11 +46,15 @@ import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Hardware
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.KeyboardDoubleArrowDown
+import androidx.compose.material.icons.rounded.LocationCity
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Pets
+import androidx.compose.material.icons.rounded.RecordVoiceOver
+import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material.icons.rounded.SwitchCamera
+import androidx.compose.material.icons.rounded.TwoWheeler
 import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -92,6 +100,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.BlockType
 import com.example.data.model.GameMode
 import com.example.engine.MiniVoxelBlockIcon
+import com.example.engine.gl.CameraMode
 import com.example.engine.gl.VoxelPlayerController
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.viewmodel.GameWorldUiState
@@ -114,13 +123,12 @@ class BedrockJoystickState {
 }
 
 /**
- * Bulletproof Full-Screen Multi-Touch Container matching official Minecraft Bedrock Edition:
- * - Uses 2-pass pointer routing (Initial + Main) with strictly independent `joystickPointerId` and `cameraPointerId`.
- * - Once `joystickPointerId` is captured on the bottom-left joystick, `PointerEventPass.Initial` tracks it across
- *   the ENTIRE screen (native equivalent of `setPointerCapture`), so even if the thumb slides far outside the ring
- *   or over other UI elements, walking NEVER stops until the finger is physically lifted (`pointerup`).
- * - `cameraPointerId` tracks dragging independently on the viewport / right screen area with delta movement,
- *   never conflicting with walking or simultaneous Jump / Sneak / Break / Place button presses!
+ * Bulletproof Full-Screen Multi-Touch Container:
+ * - Left Virtual Joystick handles its OWN pointer capture directly in local coordinates (Android
+ *   guarantees continuous MOVE/UP delivery for that pointerId even far outside the joystick bounds,
+ *   eliminating all root-offset or orientation-change glitches!).
+ * - This container handles independent Camera Look dragging for any unconsumed finger on the viewport,
+ *   so simultaneous Walking + Camera Look + Jump + Break/Place works at 60 FPS with zero stalling!
  */
 @Composable
 fun BedrockMultiTouchContainer(
@@ -132,116 +140,59 @@ fun BedrockMultiTouchContainer(
 ) {
     val currentController by rememberUpdatedState(controller)
     val currentJoystickEnabled by rememberUpdatedState(joystickEnabled)
-    var containerRootOffset by remember { mutableStateOf(Offset.Zero) }
 
     Box(
         modifier = modifier
-            .onGloballyPositioned { coords ->
-                containerRootOffset = coords.positionInRoot()
-            }
             .pointerInput(Unit) {
-                var joystickPointerId: PointerId? = null
                 var cameraPointerId: PointerId? = null
                 var lastCameraPos = Offset.Zero
 
-                fun updateJoystickFromLocalPos(localPos: Offset) {
-                    val centerLocal = joystickState.centerInParent - containerRootOffset
-                    val maxTravel = joystickState.maxKnobTravelPx.coerceAtLeast(1f)
-                    val dx = localPos.x - centerLocal.x
-                    val dy = localPos.y - centerLocal.y
-                    val dist = hypot(dx, dy)
-                    val clampedDist = dist.coerceAtMost(maxTravel)
-                    val nx = if (dist > 0.001f) (dx / dist) * (clampedDist / maxTravel) else 0f
-                    val ny = if (dist > 0.001f) (dy / dist) * (clampedDist / maxTravel) else 0f
-
-                    joystickState.knobOffset = Offset(nx * maxTravel, ny * maxTravel)
-                    joystickState.isPressed = true
-
-                    val forward = -ny // Up on screen is +1 forward
-                    currentController.moveInputX = nx
-                    currentController.moveInputY = forward
-                    val autoSprint = forward > 0.85f && !currentController.sneaking
-                    currentController.autoSprinting = autoSprint
-                    joystickState.isAutoSprinting = autoSprint
-                }
-
-                fun resetJoystick() {
-                    joystickPointerId = null
-                    joystickState.knobOffset = Offset.Zero
-                    joystickState.isPressed = false
-                    joystickState.isAutoSprinting = false
-                    currentController.moveInputX = 0f
-                    currentController.moveInputY = 0f
-                    currentController.autoSprinting = false
-                }
-
                 awaitPointerEventScope {
                     while (true) {
-                        // PASS 1 (Initial): Captured joystick & camera pointers are processed BEFORE any child UI.
-                        // This guarantees sliding outside the joystick circle or over buttons NEVER interrupts movement!
-                        val initialEvent = awaitPointerEvent(PointerEventPass.Initial)
-
-                        val activeJoyId = joystickPointerId
-                        if (activeJoyId != null) {
-                            val joyChange = initialEvent.changes.firstOrNull { it.id == activeJoyId }
-                            if (joyChange == null || !joyChange.pressed) {
-                                joyChange?.consume()
-                                resetJoystick()
-                            } else {
-                                updateJoystickFromLocalPos(joyChange.position)
-                                joyChange.consume()
-                            }
-                        }
-
-                        val activeCamId = cameraPointerId
-                        if (activeCamId != null) {
-                            val camChange = initialEvent.changes.firstOrNull { it.id == activeCamId }
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val activeCam = cameraPointerId
+                        if (activeCam != null) {
+                            val camChange = event.changes.firstOrNull { it.id == activeCam }
                             if (camChange == null || !camChange.pressed) {
-                                camChange?.consume()
                                 cameraPointerId = null
                             } else {
-                                val deltaX = camChange.position.x - lastCameraPos.x
-                                val deltaY = camChange.position.y - lastCameraPos.y
+                                val rawDx = camChange.position.x - lastCameraPos.x
+                                val rawDy = camChange.position.y - lastCameraPos.y
                                 lastCameraPos = camChange.position
-                                if (deltaX != 0f || deltaY != 0f) {
-                                    val sensitivity = 0.0048f
+                                if (rawDx != 0f || rawDy != 0f) {
+                                    // Density-normalized smooth camera look with jump clamping (consistent on all phones/tablets!)
+                                    val safeDensity = density.coerceAtLeast(1f)
+                                    val dpDx = (rawDx / safeDensity).coerceIn(-64f, 64f)
+                                    val dpDy = (rawDy / safeDensity).coerceIn(-64f, 64f)
+                                    val yawSens = 0.0088f
+                                    val pitchSens = 0.0068f
                                     currentController.rotateLook(
-                                        deltaYawRad = deltaX * sensitivity,
-                                        deltaPitchRad = -deltaY * sensitivity
+                                        deltaYawRad = dpDx * yawSens,
+                                        deltaPitchRad = -dpDy * pitchSens
                                     )
                                 }
                                 camChange.consume()
                             }
-                        }
-
-                        // PASS 2 (Main): Runs AFTER child HUD buttons have had first priority to claim new taps.
-                        // Any remaining unconsumed pointerdown is cleanly routed to Joystick or Camera Look!
-                        val mainEvent = awaitPointerEvent(PointerEventPass.Main)
-                        val topSafePx = 62.dp.toPx()
-                        val bottomSafePx = size.height - 76.dp.toPx()
-                        for (change in mainEvent.changes) {
-                            if (change.isConsumed || !change.pressed || change.previousPressed) continue
-                            if (change.id == joystickPointerId || change.id == cameraPointerId) continue
-
-                            val centerLocal = joystickState.centerInParent - containerRootOffset
-                            val captureRadius = joystickState.outerRadiusPx * 1.48f
-                            val distToJoy = hypot(
-                                change.position.x - centerLocal.x,
-                                change.position.y - centerLocal.y
-                            )
-
-                            if (currentJoystickEnabled && joystickPointerId == null && distToJoy <= captureRadius) {
-                                joystickPointerId = change.id
-                                updateJoystickFromLocalPos(change.position)
-                                change.consume()
-                            } else if (
-                                cameraPointerId == null &&
-                                change.position.y > topSafePx &&
-                                change.position.y < bottomSafePx
-                            ) {
-                                cameraPointerId = change.id
-                                lastCameraPos = change.position
-                                change.consume()
+                        } else {
+                            val topSafePx = 56.dp.toPx()
+                            val bottomSafePx = size.height - 72.dp.toPx()
+                            val joystickExcludeX = 216.dp.toPx()
+                            val joystickExcludeTopY = size.height - 252.dp.toPx()
+                            val fresh = event.changes.firstOrNull { ch ->
+                                val inJoystickCorner = currentJoystickEnabled &&
+                                    ch.position.x < joystickExcludeX &&
+                                    ch.position.y > joystickExcludeTopY
+                                !ch.isConsumed &&
+                                    !inJoystickCorner &&
+                                    ch.pressed &&
+                                    !ch.previousPressed &&
+                                    ch.position.y > topSafePx &&
+                                    ch.position.y < bottomSafePx
+                            }
+                            if (fresh != null) {
+                                cameraPointerId = fresh.id
+                                lastCameraPos = fresh.position
+                                fresh.consume()
                             }
                         }
                     }
@@ -253,34 +204,92 @@ fun BedrockMultiTouchContainer(
 }
 
 /**
- * Official Play Store Minecraft Bedrock Edition Virtual Joystick ("Joystick & Aim Crosshair" mode):
- * Semi-transparent dark grey circular base, subtle directional arrows, crisp clamped inner thumb knob,
- * and automatic Sprint highlight when pushed >85% forward.
+ * Self-Contained Zero-Lag Virtual Joystick ("Joystick & Aim Crosshair" mode):
+ * - Captures its own finger directly in LOCAL widget coordinates (immune to screen rotation / offset bugs!).
+ * - Smooth 360° movement: Forward (+Y), Backward (-Y), Left (-X), Right (+X), plus Auto-Sprint >85% forward.
  */
 @Composable
 fun BedrockVirtualJoystickVisual(
     state: BedrockJoystickState,
+    controller: VoxelPlayerController,
     modifier: Modifier = Modifier,
-    padSize: Dp = 136.dp
+    padSize: Dp = 182.dp
 ) {
+    val currentController by rememberUpdatedState(controller)
+
     Box(
         modifier = modifier
             .size(padSize)
-            .onGloballyPositioned { coords ->
-                val rootPos = coords.positionInRoot()
-                val w = coords.size.width.toFloat()
-                val h = coords.size.height.toFloat()
-                state.centerInParent = Offset(rootPos.x + w / 2f, rootPos.y + h / 2f)
-                state.outerRadiusPx = minOf(w, h) / 2f
-                state.maxKnobTravelPx = state.outerRadiusPx * 0.62f
+            .pointerInput(Unit) {
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val visualOuterR = minOf(size.width, size.height) * 0.39f
+                val maxTravel = (visualOuterR * 0.72f).coerceAtLeast(1f)
+
+                fun applyLocalPos(pos: Offset) {
+                    val dx = pos.x - center.x
+                    val dy = pos.y - center.y
+                    val dist = hypot(dx, dy)
+                    val clamped = dist.coerceAtMost(maxTravel)
+                    val nx = if (dist > 0.001f) (dx / dist) * (clamped / maxTravel) else 0f
+                    val ny = if (dist > 0.001f) (dy / dist) * (clamped / maxTravel) else 0f
+
+                    state.knobOffset = Offset(nx * maxTravel, ny * maxTravel)
+                    state.isPressed = true
+
+                    val forward = -ny // Up on screen is +1 forward, Down is -1 backward
+                    currentController.moveInputX = nx
+                    currentController.moveInputY = forward
+                    val autoSprint = forward > 0.82f && !currentController.sneaking
+                    currentController.autoSprinting = autoSprint
+                    state.isAutoSprinting = autoSprint
+                }
+
+                fun resetStick() {
+                    state.knobOffset = Offset.Zero
+                    state.isPressed = false
+                    state.isAutoSprinting = false
+                    currentController.moveInputX = 0f
+                    currentController.moveInputY = 0f
+                    currentController.autoSprinting = false
+                }
+
+                awaitPointerEventScope {
+                    var activePointerId: PointerId? = null
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val active = activePointerId
+                            if (active != null) {
+                                val change = event.changes.firstOrNull { it.id == active }
+                                if (change == null || !change.pressed) {
+                                    change?.consume()
+                                    activePointerId = null
+                                    resetStick()
+                                } else {
+                                    applyLocalPos(change.position)
+                                    change.consume()
+                                }
+                            } else {
+                                val fresh = event.changes.firstOrNull { !it.isConsumed && it.pressed && !it.previousPressed }
+                                if (fresh != null) {
+                                    activePointerId = fresh.id
+                                    fresh.consume()
+                                    applyLocalPos(fresh.position)
+                                }
+                            }
+                        }
+                    } finally {
+                        resetStick()
+                    }
+                }
             }
             .testTag("virtual_joystick")
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val center = Offset(size.width / 2f, size.height / 2f)
-            val outerR = size.minDimension / 2f - 3.dp.toPx()
-            val knobR = size.minDimension * 0.21f
-            val baseAlpha = if (state.isPressed) 0.52f else 0.38f
+            val outerR = size.minDimension * 0.39f
+            val knobR = outerR * 0.42f
+            val baseAlpha = if (state.isPressed) 0.54f else 0.36f
 
             // Classic semi-transparent dark grey circular outer ring
             drawCircle(
@@ -371,7 +380,15 @@ fun BedrockVirtualJoystickVisual(
  */
 @Composable
 fun BedrockTopCenterBar(
-    thirdPersonCamera: Boolean,
+    cameraMode: CameraMode,
+    goldCoins: Int,
+    adminUnlocked: Boolean,
+    ridingBike: Boolean,
+    onOpenBikes: () -> Unit,
+    onOpenAdmin: () -> Unit,
+    onOpenRealEstate: () -> Unit,
+    onOpenAiFriends: () -> Unit,
+    onOpenShop: () -> Unit,
     onOpenChat: () -> Unit,
     onOpenPause: () -> Unit,
     onToggleCamera: () -> Unit,
@@ -379,9 +396,45 @@ fun BedrockTopCenterBar(
 ) {
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        BedrockTopSquareButton(
+            icon = Icons.Rounded.TwoWheeler,
+            contentDescription = "Superbike Garage (6 Rideable Bikes)",
+            active = ridingBike,
+            badgeText = "BIKE",
+            onClick = onOpenBikes,
+            tag = "top_bikes_button"
+        )
+        BedrockTopSquareButton(
+            icon = Icons.Rounded.LocationCity,
+            contentDescription = "Real Estate Township & Properties",
+            active = true,
+            badgeText = "CITY",
+            onClick = onOpenRealEstate,
+            tag = "top_real_estate_button"
+        )
+        BedrockTopSquareButton(
+            icon = Icons.Rounded.AdminPanelSettings,
+            contentDescription = "Admin Studio Panel",
+            active = adminUnlocked,
+            onClick = onOpenAdmin,
+            tag = "top_admin_button"
+        )
+        BedrockTopSquareButton(
+            icon = Icons.Rounded.RecordVoiceOver,
+            contentDescription = "AI Friends Hindi Voice",
+            active = true,
+            onClick = onOpenAiFriends,
+            tag = "top_ai_friends_button"
+        )
+        BedrockTopSquareButton(
+            icon = Icons.Rounded.Storefront,
+            contentDescription = "Royal Bazaar Shop ($goldCoins Coins)",
+            onClick = onOpenShop,
+            tag = "top_shop_button"
+        )
         BedrockTopSquareButton(
             icon = Icons.Rounded.ChatBubbleOutline,
             contentDescription = "Chat and World Commands",
@@ -396,8 +449,9 @@ fun BedrockTopCenterBar(
         )
         BedrockTopSquareButton(
             icon = Icons.Rounded.SwitchCamera,
-            contentDescription = "Toggle Camera View",
-            active = thirdPersonCamera,
+            contentDescription = "Switch Camera Angle (${cameraMode.displayName})",
+            active = cameraMode != CameraMode.FIRST_PERSON,
+            badgeText = cameraMode.shortLabel,
             onClick = onToggleCamera,
             tag = "hud_camera_button"
         )
@@ -410,7 +464,8 @@ private fun BedrockTopSquareButton(
     contentDescription: String,
     onClick: () -> Unit,
     tag: String,
-    active: Boolean = false
+    active: Boolean = false,
+    badgeText: String? = null
 ) {
     var pressed by remember { mutableStateOf(false) }
     val currentOnClick by rememberUpdatedState(onClick)
@@ -443,12 +498,33 @@ private fun BedrockTopSquareButton(
             .testTag(tag),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (active) Color(0xFF7CFFB2) else Color.White,
-            modifier = Modifier.size(22.dp)
-        )
+        if (badgeText != null) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = contentDescription,
+                    tint = if (active) Color(0xFF7CFFB2) else Color.White,
+                    modifier = Modifier.size(19.dp)
+                )
+                Text(
+                    text = badgeText,
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (active) Color(0xFFFFE57F) else Color(0xDDFFFFFF)
+                )
+            }
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = if (active) Color(0xFF7CFFB2) else Color.White,
+                modifier = Modifier.size(22.dp)
+            )
+        }
     }
 }
 
@@ -546,7 +622,8 @@ fun BedrockActionButtonsCluster(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (uiState.gameMode == GameMode.CREATIVE && uiState.flying) {
+            val canFly = uiState.gameMode == GameMode.CREATIVE || uiState.jetBootsUnlocked
+            if (canFly && uiState.flying) {
                 BedrockTactileHoldButton(
                     icon = Icons.Rounded.ArrowDownward,
                     contentDescription = "Fly Down",
@@ -562,7 +639,7 @@ fun BedrockActionButtonsCluster(
                     tag = "btn_fly_up"
                 )
             }
-            if (uiState.gameMode == GameMode.CREATIVE) {
+            if (canFly) {
                 BedrockTactileTapButton(
                     icon = Icons.Rounded.FlightTakeoff,
                     contentDescription = "Toggle Flight",
@@ -1085,9 +1162,11 @@ fun BedrockChatSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp)
-                .padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text("World Chat & Quick Commands", style = MaterialTheme.typography.headlineMedium)
 
@@ -1168,7 +1247,7 @@ fun BedrockChatSheet(
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(140.dp)
+                    .height(104.dp)
             ) {
                 LazyColumn(
                     contentPadding = PaddingValues(10.dp),

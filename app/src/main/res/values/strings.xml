@@ -31,4 +31,23 @@
     <string name="cd_zoom_in">Zoom in</string>
     <string name="cd_zoom_out">Zoom out</string>
     <string name="cd_recenter_camera">Recenter camera</string>
+
+    <!-- Automatic APK Update System -->
+    <string name="update_title">नया अपडेट उपलब्ध है!</string>
+    <string name="update_force_badge">ज़रूरी अपडेट</string>
+    <string name="update_whats_new">इस अपडेट में क्या नया है:</string>
+    <string name="update_default_notes">बेहतर प्रदर्शन, नए फीचर्स और बग फिक्स के साथ नया वर्ज़न तैयार है।</string>
+    <string name="update_action_now">अपडेट करें</string>
+    <string name="update_action_later">बाद में</string>
+    <string name="update_action_retry">दोबारा कोशिश करें</string>
+    <string name="update_action_install_now">अभी इंस्टॉल करें</string>
+    <string name="update_action_open_settings">सेटिंग्स खोलें</string>
+    <string name="update_downloading_title">अपडेट डाउनलोड हो रहा है…</string>
+    <string name="update_downloading_hint">कृपया इंटरनेट चालू रखें और ऐप बंद न करें।</string>
+    <string name="update_ready_title">डाउनलोड पूरा हो गया!</string>
+    <string name="update_ready_hint">नया वर्ज़न इंस्टॉल करने के लिए नीचे बटन दबाएँ।</string>
+    <string name="update_permission_title">इंस्टॉल अनुमति ज़रूरी है</string>
+    <string name="update_permission_message">अपडेट इंस्टॉल करने के लिए कृपया Android सेटिंग्स में जाकर BlockForge के लिए \"इस स्रोत से अनुमति दें\" (Install unknown apps) चालू करें। वापस आते ही इंस्टॉल अपने आप शुरू हो जाएगा।</string>
+    <string name="update_error_title">डाउनलोड असफल रहा</string>
+    <string name="update_cd_icon">ऐप अपडेट आइकन</string>
 </resources>

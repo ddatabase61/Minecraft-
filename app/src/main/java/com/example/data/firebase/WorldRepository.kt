@@ -1,7 +1,6 @@
 package com.example.data.firebase
 
 import android.content.Context
-import com.example.R
 import com.example.data.WorldDataSource
 import com.example.data.model.BiomeType
 import com.example.data.model.BuilderProfile
@@ -27,6 +26,19 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import kotlin.math.max
 
+/**
+ * Safely resolves `firestore_database_id` at runtime so builds without
+ * `firebase_applet_config.xml` (e.g. public GitHub / offline builds) compile cleanly.
+ */
+fun resolveFirestoreDatabaseId(context: Context): String? {
+    val resId = context.resources.getIdentifier(
+        "firestore_database_id",
+        "string",
+        context.packageName
+    )
+    return if (resId != 0) context.getString(resId).takeIf { it.isNotBlank() } else null
+}
+
 class WorldRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth = Firebase.auth
@@ -34,9 +46,9 @@ class WorldRepository(
     override val isCloudBacked: Boolean = true
 
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        resolveFirestoreDatabaseId(context.applicationContext)?.let { dbId ->
+            FirebaseFirestore.getInstance(dbId)
+        } ?: FirebaseFirestore.getInstance()
     )
 
     private fun requireUserId(): String {

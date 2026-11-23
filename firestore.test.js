@@ -268,3 +268,105 @@ test("Cross-user isolation prevents Bob from reading, listing, or modifying Alic
       .delete()
   );
 });
+
+// --- APP AUTO-UPDATE CONFIG (/app_config/update) TESTS ---
+
+const ADMIN_EMAIL = "ddatabase61@gmail.com";
+
+function validUpdateConfigPayload() {
+  return {
+    latestVersionCode: 2,
+    latestVersionName: "1.1.0",
+    apkUrl: "https://github.com/blockforge/releases/releases/download/v1.1.0/BlockForge-v1.1.0.apk",
+    forceUpdate: false,
+    releaseNotes: "नए रियल एस्टेट मैप, बेहतर कैमरा एंगल और स्मूथ गेमप्ले!",
+  };
+}
+
+test("app_config/update: public read allowed for unauthenticated & regular users; writes denied", async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("app_config").doc("update").set(validUpdateConfigPayload());
+  });
+
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID, {
+    email: "alice@example.com",
+    email_verified: true,
+  }).firestore();
+
+  // Public get on /app_config/update succeeds for both guests and signed-in players
+  await assertSucceeds(unauthDb.collection("app_config").doc("update").get());
+  await assertSucceeds(aliceDb.collection("app_config").doc("update").get());
+
+  // Listing /app_config or reading other docs is denied for non-admins
+  await assertFails(unauthDb.collection("app_config").get());
+  await assertFails(aliceDb.collection("app_config").get());
+  await assertFails(unauthDb.collection("app_config").doc("secrets").get());
+
+  // Writes and deletes denied for unauthenticated and regular users
+  await assertFails(unauthDb.collection("app_config").doc("update").set(validUpdateConfigPayload()));
+  await assertFails(aliceDb.collection("app_config").doc("update").set(validUpdateConfigPayload()));
+  await assertFails(
+    aliceDb.collection("app_config").doc("update").update({ latestVersionCode: 99 })
+  );
+  await assertFails(aliceDb.collection("app_config").doc("update").delete());
+});
+
+test("app_config/update: unverified spoofed admin email is rejected", async () => {
+  const spoofedAdminDb = testEnv.authenticatedContext("spoof_uid", {
+    email: ADMIN_EMAIL,
+    email_verified: false,
+  }).firestore();
+
+  await assertFails(
+    spoofedAdminDb.collection("app_config").doc("update").set(validUpdateConfigPayload())
+  );
+});
+
+test("app_config/update: verified admin can create/update/delete valid config; invalid schema rejected", async () => {
+  const adminDb = testEnv.authenticatedContext("admin_uid", {
+    email: ADMIN_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const docRef = adminDb.collection("app_config").doc("update");
+
+  // Valid create succeeds
+  await assertSucceeds(docRef.set(validUpdateConfigPayload()));
+  await assertSucceeds(docRef.get());
+
+  // Valid partial update succeeds (e.g. pushing v1.2.0 force update)
+  await assertSucceeds(
+    docRef.update({
+      latestVersionCode: 3,
+      latestVersionName: "1.2.0",
+      forceUpdate: true,
+      apkUrl: "https://github.com/blockforge/releases/releases/download/v1.2.0/BlockForge-v1.2.0.apk",
+    })
+  );
+
+  // Reject non-HTTPS apkUrl (security guard)
+  await assertFails(
+    docRef.update({
+      apkUrl: "http://insecure.example.com/app.apk",
+    })
+  );
+
+  // Reject ghost field injection
+  await assertFails(
+    docRef.update({
+      latestVersionCode: 4,
+      maliciousFlag: true,
+    })
+  );
+
+  // Reject invalid versionCode (<= 0)
+  await assertFails(
+    docRef.update({
+      latestVersionCode: 0,
+    })
+  );
+
+  // Admin delete succeeds
+  await assertSucceeds(docRef.delete());
+});
+

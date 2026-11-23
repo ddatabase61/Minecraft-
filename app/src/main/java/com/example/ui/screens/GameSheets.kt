@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -140,7 +141,8 @@ fun BlockInventorySheet(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(320.dp)
+                    .weight(1f, fill = false)
+                    .heightIn(max = 300.dp)
             ) {
                 items(blocks, key = { it.id }) { block ->
                     val count = uiState.countOf(block)
@@ -237,7 +239,8 @@ fun CraftingBenchSheet(
                 contentPadding = PaddingValues(bottom = 12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(360.dp)
+                    .weight(1f, fill = false)
+                    .heightIn(max = 320.dp)
             ) {
                 items(CRAFTING_RECIPES, key = { it.id }) { recipe ->
                     val alreadyOwnedTool = recipe.unlocksPickaxeTier != null &&

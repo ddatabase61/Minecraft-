@@ -90,10 +90,14 @@ class HubViewModel(
         seed: Long,
         onCreated: (String) -> Unit
     ) {
+        if (_busyMessage.value != null) return
         viewModelScope.launch {
             _busyMessage.value = "Forging ${biome.displayName}..."
-            val result = repository.createWorld(name, biome, gameMode, seed)
-            _busyMessage.value = null
+            val result = try {
+                repository.createWorld(name, biome, gameMode, seed)
+            } finally {
+                _busyMessage.value = null
+            }
             result.fold(
                 onSuccess = { world ->
                     onCreated(world.id)

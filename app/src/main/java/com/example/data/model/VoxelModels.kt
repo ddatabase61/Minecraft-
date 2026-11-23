@@ -364,6 +364,56 @@ enum class BlockType(
         translucent = true,
         description = "Cascading aerated mountain stream with white mist foam.",
         biomeSource = "Mountain Cliffs & Rivers"
+    ),
+    FLOWER_PINK(
+        id = 28,
+        displayName = "Pink Rose (गुलाब)",
+        category = BlockCategory.DECOR,
+        topColor = Color(0xFFFF5CA8),
+        leftColor = Color(0xFFE03586),
+        rightColor = Color(0xFF3DA635),
+        accentColor = Color(0xFFFF9ECE),
+        translucent = true,
+        crossPlant = true,
+        description = "Fragrant pink rose petals blooming across flower meadows and cherry groves.",
+        biomeSource = "Flower Valley, Emerald Valley"
+    ),
+    FLOWER_PURPLE(
+        id = 29,
+        displayName = "Royal Lavender",
+        category = BlockCategory.DECOR,
+        topColor = Color(0xFFB36BFF),
+        leftColor = Color(0xFF883EE0),
+        rightColor = Color(0xFF3DA635),
+        accentColor = Color(0xFFD8B4FE),
+        translucent = true,
+        crossPlant = true,
+        description = "Tall purple lavender stalks glowing in valleys and sky islands.",
+        biomeSource = "Flower Valley, Sky Islands"
+    ),
+    FLOWER_SUNFLOWER(
+        id = 30,
+        displayName = "Sunflower (सूरजमुखी)",
+        category = BlockCategory.DECOR,
+        topColor = Color(0xFFFFD600),
+        leftColor = Color(0xFFE6A800),
+        rightColor = Color(0xFF3DA635),
+        accentColor = Color(0xFFFFF176),
+        translucent = true,
+        crossPlant = true,
+        description = "Tall radiant golden sunflower turning toward the warm voxel sun.",
+        biomeSource = "Flower Valley, Meadows"
+    ),
+    CHERRY_LEAVES(
+        id = 31,
+        displayName = "Cherry Blossom",
+        category = BlockCategory.DECOR,
+        topColor = Color(0xFFFF9EC7),
+        leftColor = Color(0xFFE872A5),
+        rightColor = Color(0xFFD96499),
+        accentColor = Color(0xFFFFD6E8),
+        description = "Soft pink sakura blossom canopy for dreamy gardens and shrines.",
+        biomeSource = "Flower Valley, Sky Kingdom"
     );
 
     fun survivalDrop(): BlockType = when (this) {
@@ -391,28 +441,52 @@ enum class BiomeType(
     val badgeColor: Color
 ) {
     EMERALD_VALLEY(
-        displayName = "Emerald Valley",
-        tagline = "Lush green hills, oak groves & crystal rivers",
+        displayName = "Royal Flower Kingdom",
+        tagline = "Lush green hills, Mandir, Royal Palace, waterfalls & flowers",
         accentColor = Color(0xFF34E57A),
         badgeColor = Color(0xFF134027)
     ),
+    FLOWER_PARADISE(
+        displayName = "Mega Flower Valley",
+        tagline = "Pink cherry blossoms, 6 wildflower carpets & crystal lakes",
+        accentColor = Color(0xFFFF72B6),
+        badgeColor = Color(0xFF42162D)
+    ),
     DESERT_DUNES(
-        displayName = "Desert Dunes",
-        tagline = "Golden sand mesas, palm oasis & buried gold",
+        displayName = "Pyramid Oasis",
+        tagline = "Golden sand dunes, sandstone pyramid, palm oasis & gold",
         accentColor = Color(0xFFFFC857),
         badgeColor = Color(0xFF47330E)
     ),
     FROST_PEAKS(
-        displayName = "Frost Peaks",
-        tagline = "Snow-capped alpine ridges, glacial lakes & diamond veins",
+        displayName = "Himalaya Citadel",
+        tagline = "Snow-capped alpine peaks, frozen rivers & diamond caves",
         accentColor = Color(0xFF4CE3FF),
         badgeColor = Color(0xFF0E3947)
     ),
     VOLCANIC_BADLANDS(
-        displayName = "Volcanic Badlands",
-        tagline = "Obsidian spires, magma rivers & ancient brick ruins",
+        displayName = "Jwalamukhi & Caves",
+        tagline = "Erupting lava volcano, obsidian ridges & diamond caverns",
         accentColor = Color(0xFFFF6E40),
         badgeColor = Color(0xFF4A1B0E)
+    ),
+    JUNGLE_RIVER(
+        displayName = "Amazon Jungle",
+        tagline = "Giant rainforest canopy, emerald river & roaring waterfalls",
+        accentColor = Color(0xFF22C55E),
+        badgeColor = Color(0xFF103820)
+    ),
+    OCEAN_ISLANDS(
+        displayName = "Coral Archipelago",
+        tagline = "Turquoise tropical ocean, sandy islands & cliffside springs",
+        accentColor = Color(0xFF06B6D4),
+        badgeColor = Color(0xFF0D3340)
+    ),
+    SKY_KINGDOM(
+        displayName = "Floating Sky Islands",
+        tagline = "High cloud islands, cherry blossom gardens & sky waterfalls",
+        accentColor = Color(0xFFA78BFA),
+        badgeColor = Color(0xFF281B4A)
     );
 
     companion object {
