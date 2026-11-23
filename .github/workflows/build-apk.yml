@@ -1,8 +1,7 @@
-name: Build & Release BlockForge Android APK
+name: Build & Release BlockForge Debug APK
 
 on:
   push:
-    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
@@ -16,18 +15,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
+
+      - name: Accept Android SDK Licenses
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -n "$SDK_ROOT" ] && [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Ensure private Firebase config fallback (never committed publicly)
+      - name: Ensure Firebase config fallback (never committed publicly)
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           FIREBASE_APPLET_CONFIG_XML: ${{ secrets.FIREBASE_APPLET_CONFIG_XML }}
@@ -36,6 +42,7 @@ jobs:
             echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
           fi
           if [ -n "$FIREBASE_APPLET_CONFIG_XML" ]; then
+            mkdir -p app/src/main/res/values
             echo "$FIREBASE_APPLET_CONFIG_XML" > app/src/main/res/values/firebase_applet_config.xml
           elif [ ! -f app/src/main/res/values/firebase_applet_config.xml ]; then
             mkdir -p app/src/main/res/values
@@ -47,7 +54,7 @@ jobs:
           EOF
           fi
 
-      - name: Restore consistent debug keystore (required for in-place APK upgrades!)
+      - name: Restore consistent debug keystore (required for in-place APK upgrades)
         run: |
           if [ ! -f debug.keystore ]; then
             if [ -f debug.keystore.base64 ]; then
@@ -76,49 +83,44 @@ jobs:
           echo "tag=v${VERSION_NAME:-1.0}-b${VERSION_CODE:-1}" >> "$GITHUB_OUTPUT"
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug --no-daemon --no-configuration-cache
 
-      - name: Copy release-ready APK with clean filename
+      - name: Prepare Release APK Assets
         run: |
           mkdir -p release-assets
           cp app/build/outputs/apk/debug/app-debug.apk release-assets/BlockForge.apk
-          cp app/build/outputs/apk/debug/app-debug.apk "release-assets/BlockForge-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "release-assets/BlockForge-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}-debug.apk"
+          ls -lh release-assets/
 
-      - name: Upload BlockForge APK Artifact
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BlockForge-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}-APK
+          name: BlockForge-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}-Debug-APK
           path: release-assets/BlockForge.apk
           if-no-files-found: error
 
       - name: Publish GitHub Release with Direct APK Download Link
-        env:
-          GH_TOKEN: ${{ github.token }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: BlockForge v${{ steps.version.outputs.name }} (Build ${{ steps.version.outputs.code }})
+          make_latest: true
+          files: |
+            release-assets/BlockForge.apk
+            release-assets/BlockForge-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}-debug.apk
+          body: |
+            Automatic BlockForge Android Debug APK Release.
+
+            - **versionCode**: ${{ steps.version.outputs.code }}
+            - **versionName**: ${{ steps.version.outputs.name }}
+            - **Direct APK Link (always latest)**: https://github.com/${{ github.repository }}/releases/latest/download/BlockForge.apk
+
+      - name: Write Direct Download Links to Summary
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          TITLE="BlockForge v${{ steps.version.outputs.name }} (Build ${{ steps.version.outputs.code }})"
           DIRECT_URL="https://github.com/${{ github.repository }}/releases/latest/download/BlockForge.apk"
-          VERSIONED_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/BlockForge.apk"
-          NOTES="Automatic BlockForge Android APK build.
-
-          - **versionCode**: ${{ steps.version.outputs.code }}
-          - **versionName**: ${{ steps.version.outputs.name }}
-          - **Direct APK Link (always latest)**: ${DIRECT_URL}
-          - **Versioned APK Link**: ${VERSIONED_URL}"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release-assets/BlockForge.apk "release-assets/BlockForge-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}.apk" --clobber
-          else
-            gh release create "$TAG" release-assets/BlockForge.apk "release-assets/BlockForge-v${{ steps.version.outputs.name }}-b${{ steps.version.outputs.code }}.apk" \
-              --title "$TITLE" \
-              --notes "$NOTES" \
-              --latest
-          fi
-
           {
-            echo "## BlockForge APK Ready!"
-            echo "- **Direct APK Download Link (Firestore \`apkUrl\`)**: ${DIRECT_URL}"
-            echo "- **Versioned APK Link**: ${VERSIONED_URL}"
+            echo "## BlockForge Debug APK Ready!"
+            echo "- **Direct APK Download Link**: ${DIRECT_URL}"
             echo "- **latestVersionCode**: \`${{ steps.version.outputs.code }}\`"
             echo "- **latestVersionName**: \`${{ steps.version.outputs.name }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
